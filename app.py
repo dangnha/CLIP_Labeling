@@ -65,6 +65,16 @@ def generate_caption(image, blip_processor, blip_model):
     caption = blip_processor.decode(out[0], skip_special_tokens=True)
     return caption
 
+# Calculate caption confidence score
+def calculate_caption_confidence(clip_model, preprocess, image, device, caption):
+    # Get image and text embeddings
+    image_embedding = get_image_embedding(clip_model, preprocess, image, device)
+    text_embedding = get_text_embedding(clip_model, caption, device)
+    
+    # Calculate cosine similarity
+    similarity = F.cosine_similarity(image_embedding, text_embedding, dim=-1)
+    return similarity.item()
+
 # Zero-shot classification
 def classify_image(model, preprocess, image, device, categories):
     image_input = preprocess(image).unsqueeze(0).to(device)
@@ -104,10 +114,33 @@ def save_to_database(image, embedding, caption, label):
         'caption': caption,
         'label': label,
         'embedding': embedding.cpu().numpy(),
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'original_caption': caption  # Store original caption for reference
     }
     
     return img_id
+
+# Update caption in database
+def update_caption_in_database(img_id, new_caption, clip_model, preprocess, device):
+    if img_id in st.session_state.db_images:
+        # Get the image
+        img_path = st.session_state.db_images[img_id]['path']
+        image = Image.open(img_path)
+        
+        # Calculate confidence for new caption
+        new_confidence = calculate_caption_confidence(clip_model, preprocess, image, device, new_caption)
+        
+        # Calculate confidence for original caption
+        original_caption = st.session_state.db_images[img_id]['original_caption']
+        original_confidence = calculate_caption_confidence(clip_model, preprocess, image, device, original_caption)
+        
+        # Only update if new confidence is higher
+        if new_confidence > original_confidence:
+            st.session_state.db_images[img_id]['caption'] = new_caption
+            return True, new_confidence
+        else:
+            return False, new_confidence
+    return False, 0
 
 # Find similar images
 def find_similar_images(query_embedding, top_k=5):
@@ -126,13 +159,63 @@ def find_similar_images(query_embedding, top_k=5):
     # Return top-k results
     return similarities[:top_k]
 
+# Process uploaded folder
+def process_uploaded_folder(folder_path, clip_model, preprocess, blip_processor, blip_model, device, categories):
+    total_files = 0
+    processed_files = 0
+    
+    # Count total image files
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                total_files += 1
+    
+    if total_files == 0:
+        return 0, 0
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # Process each image file
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                try:
+                    img_path = os.path.join(root, file)
+                    image = Image.open(img_path).convert("RGB")
+                    
+                    # Generate caption
+                    caption = generate_caption(image, blip_processor, blip_model)
+                    
+                    # Get image embedding
+                    embedding = get_image_embedding(clip_model, preprocess, image, device)
+                    
+                    # Classify image to get label
+                    label_results = classify_image(clip_model, preprocess, image, device, categories)
+                    top_label = label_results[0][0] if label_results else "unknown"
+                    
+                    # Save to database
+                    save_to_database(image, embedding, caption, top_label)
+                    
+                    processed_files += 1
+                    progress = processed_files / total_files
+                    progress_bar.progress(progress)
+                    status_text.text(f"Processed {processed_files}/{total_files} images")
+                except Exception as e:
+                    st.error(f"Error processing {file}: {str(e)}")
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    return total_files, processed_files
+
 # Main function
 def main():
     # Sidebar
     st.sidebar.title("CLIP Vision App")
     app_mode = st.sidebar.selectbox(
         "Choose a task", 
-        ["Image Captioning", "Image Classification", "Image Retrieval", "Database Management"]
+        ["Image Captioning", "Image Classification", "Image Retrieval", "Database Management", "Bulk Upload"]
     )
     
     # Load models
@@ -168,8 +251,30 @@ def main():
                     caption = generate_caption(image, blip_processor, blip_model)
                     st.write("**Caption:**", caption)
                     
+                    # Calculate caption confidence
+                    confidence = calculate_caption_confidence(clip_model, preprocess, image, device, caption)
+                    st.write(f"**Confidence Score:** {confidence:.3f}")
+                    
                     # Get image embedding
                     embedding = get_image_embedding(clip_model, preprocess, image, device)
+                    
+                    # Option to edit caption
+                    with st.expander("Edit Caption"):
+                        new_caption = st.text_area("Edit the caption", value=caption)
+                        if st.button("Update Caption"):
+                            is_updated, new_confidence = update_caption_in_database(
+                                next(iter(st.session_state.db_images.keys())) if st.session_state.db_images else None,
+                                new_caption,
+                                clip_model,
+                                preprocess,
+                                device
+                            )
+                            
+                            if is_updated:
+                                st.success(f"Caption updated! New confidence: {new_confidence:.3f}")
+                                st.experimental_rerun()
+                            else:
+                                st.warning(f"Caption not updated. Confidence ({new_confidence:.3f}) not higher than original ({confidence:.3f})")
                     
                     # Option to save to database
                     if st.button("Save to Database"):
@@ -177,7 +282,7 @@ def main():
                         label_results = classify_image(clip_model, preprocess, image, device, default_categories)
                         top_label = label_results[0][0] if label_results else "unknown"
                         
-                        save_to_database(image, embedding, caption, top_label)
+                        img_id = save_to_database(image, embedding, caption, top_label)
                         st.success("Image saved to database!")
                     
                     # Option to download captioned image
@@ -373,6 +478,31 @@ def main():
                             st.write(f"Label: {img_data['label']}")
                             st.write(f"Date: {img_data['timestamp']}")
                             
+                            # Edit caption button
+                            with st.expander("Edit Caption"):
+                                new_caption = st.text_area("Edit caption", value=img_data['caption'], key=f"edit_{img_id}")
+                                if st.button("Update", key=f"update_{img_id}"):
+                                    is_updated, new_confidence = update_caption_in_database(
+                                        img_id,
+                                        new_caption,
+                                        clip_model,
+                                        preprocess,
+                                        device
+                                    )
+                                    
+                                    if is_updated:
+                                        st.success(f"Caption updated! New confidence: {new_confidence:.3f}")
+                                        st.experimental_rerun()
+                                    else:
+                                        original_confidence = calculate_caption_confidence(
+                                            clip_model,
+                                            preprocess,
+                                            img,
+                                            device,
+                                            img_data['original_caption']
+                                        )
+                                        st.warning(f"Caption not updated. Confidence ({new_confidence:.3f}) not higher than original ({original_confidence:.3f})")
+                            
                             # Download button
                             buffered = io.BytesIO()
                             fig, ax = plt.subplots(figsize=(10, 10))
@@ -429,6 +559,46 @@ def main():
                 st.session_state.db_images = {}
                 st.success("Database cleared!")
                 st.experimental_rerun()
+    
+    # Bulk Upload
+    elif app_mode == "Bulk Upload":
+        st.title("Bulk Image Upload")
+        st.write("Upload a folder containing images to process them all at once.")
+        
+        uploaded_folder = st.file_uploader(
+            "Choose a folder with images", 
+            type=None, 
+            accept_multiple_files=True
+        )
+        
+        if uploaded_folder and st.button("Process Folder"):
+            # Create a temporary directory to store uploaded files
+            temp_dir = os.path.join(DATA_DIR, "temp_upload")
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Save all uploaded files to the temp directory
+            for uploaded_file in uploaded_folder:
+                if uploaded_file.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    file_path = os.path.join(temp_dir, uploaded_file.name)
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+            
+            # Process the folder
+            total_files, processed_files = process_uploaded_folder(
+                temp_dir, 
+                clip_model, 
+                preprocess, 
+                blip_processor, 
+                blip_model, 
+                device, 
+                default_categories
+            )
+            
+            # Clean up temp directory
+            shutil.rmtree(temp_dir)
+            
+            st.success(f"Processed {processed_files}/{total_files} images successfully!")
+            st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
