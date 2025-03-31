@@ -70,15 +70,13 @@ def process_and_save_image(file):
         classification_results = clip_manager.classify_image(filepath, DEFAULT_CATEGORIES)
         print(f"Classification results: {classification_results}")
         
-        # Filter labels with confidence above threshold
-        threshold = 0.2
-        labels = {
-            category: score 
-            for category, score in classification_results.items() 
-            if score > threshold
-        }
+        # Take top k = 1 and check if it exceeds the threshold
+        threshold = 0.5
+        top_category, top_score = max(classification_results.items(), key=lambda item: item[1])
         
-        if not labels:
+        if top_score > threshold:
+            labels = {top_category: top_score}
+        else:
             labels = {"unclassified": 1.0}
         
         # Store in database with relative path
