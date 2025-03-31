@@ -1,0 +1,53 @@
+# Ignore compiled files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignore generated files
+*.log
+*.out
+*.class
+
+# Ignore IDE and editor files
+.idea/
+.vscode/
+*.swp
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore build artifacts
+/build/
+/dist/
+/static/uploads/
+
+# Ignore node_modules
+node_modules/
+
+# Ignore Python virtual environment
+venv/
+
+# Ignore any sensitive files
+.env
+credentials.json
+images.db
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore Python egg metadata
+.eggs/
+
+# Ignore Python distribution files
+*.egg-info/
+
+# Ignore Python test artifacts
+.pytest_cache/
+.tox/
+

@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>Image Database Management</h2>
+    
+    <div class="row mb-3">
+        <div class="col">
+            <input type="text" id="searchInput" class="form-control" placeholder="Search by caption or labels...">
+        </div>
+    </div>
+
+    <div class="row" id="imageGrid">
+        {% for image in images %}
+        <div class="col-md-4 mb-4 image-card">
+            <div class="card h-100">
+                <div class="image-container">
+                    <img src="{{ image.path }}" class="card-img-top" alt="{{ image.caption or 'Image' }}">
+                    <div class="image-overlay">
+                        <small class="text-white">{{ image.display_name }}</small>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="caption-container">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="card-subtitle text-muted">Caption</h6>
+                            <button class="btn btn-sm btn-link edit-caption-btn p-0">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                        </div>
+                        <p class="caption-text" data-image-id="{{ image.id }}">
+                            {{ image.caption or 'No caption yet' }}
+                        </p>
+                        <div class="caption-edit-container" style="display: none;">
+                            <textarea class="form-control caption-editor mb-2">{{ image.caption or '' }}</textarea>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-primary save-caption">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary cancel-caption">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {% if image.labels %}
+                    <div class="labels-container mt-3">
+                        <h6 class="card-subtitle text-muted mb-2">Labels</h6>
+                        <div class="labels-grid">
+                            {% for category, confidence in image.labels.items() %}
+                            <div class="label-item" 
+                                 data-bs-toggle="tooltip" 
+                                 title="Confidence: {{ (confidence * 100)|round(1) }}%">
+                                <span class="label-text">{{ category }}</span>
+                                <div class="confidence-bar" style="width: {{ (confidence * 100)|round }}%;"></div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="card-footer bg-transparent">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <button class="btn btn-sm btn-outline-danger delete-btn" data-image-id="{{ image.id }}">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        <small class="text-muted">
+                            {{ image.created_at.strftime('%Y-%m-%d') if image.created_at }}
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Search functionality
+    $('#searchInput').on('input', function() {
+        let searchTerm = $(this).val().toLowerCase();
+        $('.image-card').each(function() {
+            let caption = $(this).find('.caption-text').text().toLowerCase();
+            let labels = $(this).find('.label-text').map(function() {
+                return $(this).text().toLowerCase();
+            }).get().join(' ');
+            let searchText = caption + ' ' + labels;
+            
+            if (searchText.includes(searchTerm)) {
+                $(this).show();
+            } else {
+                $(this).hide();
+            }
+        });
+    });
+
+    // Delete functionality
+    $('.delete-btn').click(function() {
+        if (confirm('Are you sure you want to delete this image?')) {
+            let imageId = $(this).data('image-id');
+            let card = $(this).closest('.image-card');
+            
+            $.ajax({
+                url: '/delete/' + imageId,
+                method: 'DELETE',
+                success: function(response) {
+                    if (response.success) {
+                        card.fadeOut(400, function() {
+                            $(this).remove();
+                        });
+                    } else {
+                        alert('Error deleting image: ' + (response.error || 'Unknown error'));
+                    }
+                },
+                error: function(xhr) {
+                    let errorMessage = 'Error deleting image';
+                    try {
+                        let response = JSON.parse(xhr.responseText);
+                        errorMessage = response.error || errorMessage;
+                    } catch(e) {}
+                    alert(errorMessage);
+                }
+            });
+        }
+    });
+
+    // Caption editing
+    $('.caption-text').dblclick(function() {
+        const container = $(this).closest('.caption-container');
+        $(this).hide();
+        container.find('.caption-edit-container').show();
+        container.find('.caption-editor').focus();
+    });
+
+    $('.cancel-caption').click(function() {
+        const container = $(this).closest('.caption-container');
+        container.find('.caption-text').show();
+        container.find('.caption-edit-container').hide();
+    });
+
+    $('.save-caption').click(function() {
+        const container = $(this).closest('.caption-container');
+        const textElement = container.find('.caption-text');
+        const editor = container.find('.caption-editor');
+        const editContainer = container.find('.caption-edit-container');
+        const imageId = textElement.data('image-id');
+        const newCaption = editor.val().trim();
+
+        // Disable the save button while processing
+        const saveBtn = $(this);
+        saveBtn.prop('disabled', true);
+        saveBtn.html('<span class="spinner-border spinner-border-sm"></span> Saving...');
+
+        // Create the request data
+        const requestData = JSON.stringify({
+            image_id: imageId,
+            caption: newCaption
+        });
+
+        console.log('Sending data:', requestData); // Debug log
+
+        fetch('/save-caption', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: requestData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                textElement.text(newCaption || 'No caption');
+                textElement.show();
+                editContainer.hide();
+            } else {
+                alert('Error saving caption: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error saving caption: ' + error.message);
+        })
+        .finally(() => {
+            // Reset button state
+            saveBtn.prop('disabled', false);
+            saveBtn.html('Save');
+        });
+    });
+});
+</script>
+{% endblock %}
+{% endblock %}

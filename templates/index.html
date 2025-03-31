@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1 class="my-4">Image Management Dashboard</h1>
+    
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-white bg-primary">
+                <div class="card-body">
+                    <h5 class="card-title">Total Images</h5>
+                    <p class="card-text display-4">{{ stats.total_images }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-white bg-success">
+                <div class="card-body">
+                    <h5 class="card-title">Labeled Images</h5>
+                    <p class="card-text display-4">{{ stats.labeled_images }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-white bg-info">
+                <div class="card-body">
+                    <h5 class="card-title">Last Upload</h5>
+                    <p class="card-text">
+                        {% if stats.last_upload %}
+                            {% if stats.last_upload is string %}
+                                {{ stats.last_upload }}
+                            {% else %}
+                                {{ stats.last_upload.strftime('%Y-%m-%d %H:%M:%S') }}
+                            {% endif %}
+                        {% else %}
+                            Never
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5>Quick Actions</h5>
+        </div>
+        <div class="card-body">
+            <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                <a href="/caption" class="btn btn-primary me-md-2">
+                    <i class="bi bi-card-text"></i> Generate Captions
+                </a>
+                <a href="/classify" class="btn btn-success me-md-2">
+                    <i class="bi bi-tags"></i> Classify Images
+                </a>
+                <a href="/search" class="btn btn-info me-md-2">
+                    <i class="bi bi-search"></i> Search Images
+                </a>
+                <a href="/manage" class="btn btn-secondary">
+                    <i class="bi bi-database"></i> Manage Database
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h5>Recently Added Images</h5>
+        </div>
+        <div class="card-body">
+            {% if recent_images %}
+            <div class="row">
+                {% for image in recent_images %}
+                <div class="col-md-4 mb-3">
+                    <div class="card h-100">
+                        <div class="image-container">
+                            <img src="{{ image.path }}" class="card-img-top" alt="{{ image.caption or 'Image' }}">
+                        </div>
+                        <div class="card-body">
+                            <h6 class="card-title">{{ image.display_name }}</h6>
+                            {% if image.caption %}
+                            <p class="card-text text-muted">{{ image.caption|truncate(50) }}</p>
+                            {% endif %}
+                            {% if image.labels %}
+                            <div class="labels mt-2">
+                                {% for category, confidence in image.labels.items() %}
+                                <span class="badge bg-primary me-1" title="Confidence: {{ '%.1f'|format(confidence * 100) }}%">
+                                    {{ category }}
+                                </span>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="card-footer">
+                            <small class="text-muted">
+                                Added {{ image.created_at.strftime('%Y-%m-%d %H:%M:%S') if image.created_at else 'Unknown' }}
+                            </small>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                No images found. Upload your first image to get started.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Dashboard specific scripts can go here
+});
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2 class="my-4">Zero-Shot Image Classification</h2>
+    
+    <div class="card">
+        <div class="card-header">
+            <h5>Classify Image</h5>
+        </div>
+        <div class="card-body">
+            <form id="classifyForm" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="imageInput" class="form-label">Select Image</label>
+                    <input class="form-control" type="file" id="imageInput" accept="image/*" required>
+                </div>
+                <div class="mb-3">
+                    <label for="categoriesInput" class="form-label">Categories (comma separated)</label>
+                    <input type="text" class="form-control" id="categoriesInput" 
+                           value="{{ ', '.join(config.DEFAULT_CATEGORIES) }}" required>
+                    <div class="form-text">Enter possible categories to classify against</div>
+                </div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-tags"></i> Classify Image
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card mt-4" id="resultsCard" style="display: none;">
+        <div class="card-header">
+            <h5>Classification Results</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <img id="previewImage" class="img-fluid rounded">
+                </div>
+                <div class="col-md-6">
+                    <div id="chartContainer"></div>
+                </div>
+            </div>
+            <div class="mt-3" id="topResults"></div>
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+$(document).ready(function() {
+    $('#classifyForm').submit(function(e) {
+        e.preventDefault();
+        const formData = new FormData();
+        formData.append('image', $('#imageInput')[0].files[0]);
+        formData.append('categories', $('#categoriesInput').val());
+        
+        $.ajax({
+            url: '/classify',
+            type: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            beforeSend: function() {
+                $('#resultsCard').hide();
+                $('#classifyForm button').prop('disabled', true);
+            },
+            success: function(response) {
+                if (response.success) {
+                    $('#previewImage').attr('src', response.image_url);
+                    $('#chartContainer').html(response.chart);
+                    
+                    // Display top results
+                    const results = response.results;
+                    const topResults = Object.entries(results)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 3);
+                    
+                    let html = '<h6>Top Predictions:</h6><ul class="list-group">';
+                    topResults.forEach(([category, score]) => {
+                        html += `
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                ${category}
+                                <span class="badge bg-primary rounded-pill">${(score * 100).toFixed(1)}%</span>
+                            </li>
+                        `;
+                    });
+                    html += '</ul>';
+                    $('#topResults').html(html);
+                    
+                    $('#resultsCard').show();
+                } else {
+                    alert('Error: ' + response.error);
+                }
+            },
+            error: function(xhr) {
+                alert('Error: ' + xhr.responseJSON.error);
+            },
+            complete: function() {
+                $('#classifyForm button').prop('disabled', false);
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+{% endblock %}

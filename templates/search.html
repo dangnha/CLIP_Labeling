@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2 class="mb-4">Search Images</h2>
+
+    <div class="row">
+        <!-- Text Search -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Text Search</h5>
+                </div>
+                <div class="card-body">
+                    <form id="textSearchForm">
+                        <div class="mb-3">
+                            <input type="text" class="form-control" id="textQuery" 
+                                   placeholder="Enter search terms..." required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Image Search -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Image Search</h5>
+                </div>
+                <div class="card-body">
+                    <form id="imageSearchForm">
+                        <div class="mb-3">
+                            <label for="imageUpload" class="form-label">Upload an image to find similar images</label>
+                            <input type="file" class="form-control" id="imageUpload" 
+                                   accept="image/*" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div id="searchResults" class="mt-4" style="display: none;">
+        <h3>Search Results</h3>
+        <div class="row" id="resultsGrid">
+            <!-- Results will be dynamically inserted here -->
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Text Search
+    $('#textSearchForm').on('submit', function(e) {
+        e.preventDefault();
+        const query = $('#textQuery').val();
+        
+        $.ajax({
+            url: '/search/text',
+            method: 'POST',
+            data: { query: query },
+            success: function(response) {
+                if (response.success) {
+                    displayResults(response.results);
+                } else {
+                    alert('Error performing search');
+                }
+            },
+            error: function() {
+                alert('Error performing search');
+            }
+        });
+    });
+
+    // Image Search
+    $('#imageSearchForm').on('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData();
+        const fileInput = $('#imageUpload')[0];
+        
+        if (fileInput.files.length > 0) {
+            formData.append('image', fileInput.files[0]);
+            
+            $.ajax({
+                url: '/search/image',
+                method: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(response) {
+                    if (response.success) {
+                        displayResults(response.results);
+                    } else {
+                        alert('Error performing search');
+                    }
+                },
+                error: function() {
+                    alert('Error performing search');
+                }
+            });
+        }
+    });
+
+    // Function to display results
+    function displayResults(results) {
+        const resultsGrid = $('#resultsGrid');
+        resultsGrid.empty();
+        
+        results.forEach(function(result) {
+            const card = `
+                <div class="col-md-4 mb-4">
+                    <div class="card h-100">
+                        <img src="${result.path}" class="card-img-top" 
+                             style="height: 200px; object-fit: cover;">
+                        <div class="card-body">
+                            <p class="card-text">
+                                <strong>Similarity:</strong> ${(result.similarity * 100).toFixed(2)}%
+                            </p>
+                            ${result.caption ? `<p class="card-text">${result.caption}</p>` : ''}
+                            ${result.labels ? `
+                                <div class="labels">
+                                    ${Object.entries(JSON.parse(result.labels)).map(([label, conf]) => 
+                                        `<span class="badge bg-primary me-1" title="Confidence: ${(conf * 100).toFixed(1)}%">
+                                            ${label}
+                                        </span>`
+                                    ).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+            resultsGrid.append(card);
+        });
+        
+        $('#searchResults').show();
+    }
+});
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="image-container" style="height: 400px;">
+                <img src="{{ image['file_path'] }}" class="card-img-top" alt="{{ image['file_name'] }}">
+            </div>
+            <div class="card-body">
+                <h5 class="card-title">{{ image['file_name'] }}</h5>
+                <p class="text-muted">
+                    Uploaded: {{ image['upload_date'] }} | 
+                    Size: {{ (image['file_size'] / 1024)|round(1) }} KB
+                </p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Edit Caption</h5>
+            </div>
+            <div class="card-body">
+                <form id="captionForm">
+                    <div class="mb-3">
+                        <label for="caption" class="form-label">New Caption</label>
+                        <textarea class="form-control" id="caption" rows="3" required></textarea>
+                        <div id="suggestions" class="mt-2"></div>
+                        <button type="button" id="getSuggestions" class="btn btn-sm btn-outline-info mt-2">
+                            <i class="bi bi-lightbulb"></i> Get Suggestions
+                        </button>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between align-items-center">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Save Caption
+                        </button>
+                        <div id="similarityResult" class="text-muted"></div>
+                    </div>
+                </form>
+                
+                <hr>
+                
+                <h5>Previous Captions</h5>
+                <div class="list-group mt-3">
+                    {% for caption in captions %}
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <p class="mb-1">{{ caption['caption'] }}</p>
+                            {% if caption['similarity_score'] is not none %}
+                            <span class="badge bg-info rounded-pill similarity-badge">
+                                Similarity: {{ "%.2f"|format(caption['similarity_score']) }}
+                            </span>
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">{{ caption['created_date'] }}</small>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Set the latest caption in the textarea if available
+    {% if captions %}
+    $('#caption').val("{{ captions[0]['caption'] }}");
+    {% endif %}
+    
+    // Get caption suggestions
+    $('#getSuggestions').click(function() {
+        $.get("{{ url_for('get_suggestions', image_id=image['id']) }}", function(data) {
+            if (data.success) {
+                let suggestionsHtml = '<div class="alert alert-info">' +
+                    '<h6>Suggestions:</h6><ul class="mb-0">';
+                
+                data.suggestions.forEach(suggestion => {
+                    suggestionsHtml += `<li><a href="#" class="suggestion-link">${suggestion}</a></li>`;
+                });
+                
+                suggestionsHtml += '</ul></div>';
+                $('#suggestions').html(suggestionsHtml);
+                
+                // Add click handler for suggestion links
+                $('.suggestion-link').click(function(e) {
+                    e.preventDefault();
+                    $('#caption').val($(this).text());
+                });
+            }
+        });
+    });
+    
+    // Handle caption submission
+    $('#captionForm').submit(function(e) {
+        e.preventDefault();
+        const newCaption = $('#caption').val().trim();
+        
+        if (!newCaption) {
+            alert('Please enter a caption');
+            return;
+        }
+        
+        $.post("{{ url_for('update_caption', image_id=image['id']) }}", {
+            caption: newCaption
+        }, function(data) {
+            if (data.success) {
+                $('#similarityResult').html(
+                    `<span class="text-success">Caption updated successfully!</span>` +
+                    (data.similarity !== undefined ? 
+                     ` Similarity: ${data.similarity.toFixed(2)}` : '')
+                );
+                
+                // Reload the page to show updated captions
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                $('#similarityResult').html(
+                    `<span class="text-danger">${data.message}</span>` +
+                    (data.similarity !== undefined ? 
+                     ` Similarity: ${data.similarity.toFixed(2)}` : '')
+                );
+            }
+        }).fail(function() {
+            $('#similarityResult').html(
+                '<span class="text-danger">Error updating caption</span>'
+            );
+        });
+    });
+});
+</script>
+{% endblock %}

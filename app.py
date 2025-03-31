@@ -1,604 +1,326 @@
-import streamlit as st
-import torch
-import clip
-from PIL import Image
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, flash
+from models.blip_captioner import BLIPCaptioner
+from models.clip_manager import CLIPManager
+from utils.database import ImageDatabase
+from utils.file_handler import save_uploaded_file, delete_file
+from utils.visualization import create_classification_chart
 import os
-import numpy as np
 import pandas as pd
+from io import StringIO
+from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, MAX_FILE_SIZE, DEFAULT_CATEGORIES
+from flask import g
+import json
+from werkzeug.utils import secure_filename
+from flask_toastr import Toastr
 from datetime import datetime
-import matplotlib.pyplot as plt
-import io
-import base64
-import torch.nn.functional as F
-import shutil
-import uuid
-from transformers import BlipProcessor, BlipForConditionalGeneration
 
-# Set page configuration
-st.set_page_config(
-    page_title="CLIP Vision App",
-    page_icon="🖼️",
-    layout="wide"
-)
+app = Flask(__name__)
+app.config.from_pyfile('config.py')
 
-# Initialize session state variables if they don't exist
-if 'db_images' not in st.session_state:
-    st.session_state.db_images = {}  # {id: {'path': path, 'caption': caption, 'embedding': embedding}}
+# Initialize components
+captioner = BLIPCaptioner()
+clip_manager = CLIPManager()
 
-# Create necessary directories
-DATA_DIR = "database_images"
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
+# Initialize Toastr
+toastr = Toastr()
+toastr.init_app(app)
 
-# Load CLIP model
-@st.cache_resource
-def load_clip_model():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, preprocess = clip.load("ViT-B/32", device=device)
-    return model, preprocess, device
+def get_db():
+    if 'db' not in g:
+        g.db = ImageDatabase()
+    return g.db
 
-# Load BLIP model for image captioning
-@st.cache_resource
-def load_blip_model():
-    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-    return processor, model
+@app.teardown_appcontext
+def close_db(exception):
+    db = g.pop('db', None)
+    if db is not None:
+        # Assuming the ImageDatabase class does not have a close method, we remove the call to db.close()
+        pass
 
-# Get image embedding
-def get_image_embedding(model, preprocess, image, device):
-    image_input = preprocess(image).unsqueeze(0).to(device)
-    with torch.no_grad():
-        image_features = model.encode_image(image_input)
-    return image_features / image_features.norm(dim=-1, keepdim=True)
-
-# Get text embedding
-def get_text_embedding(model, text, device):
-    text_inputs = clip.tokenize([text]).to(device)
-    with torch.no_grad():
-        text_features = model.encode_text(text_inputs)
-    return text_features / text_features.norm(dim=-1, keepdim=True)
-
-# Generate caption using BLIP
-def generate_caption(image, blip_processor, blip_model):
-    inputs = blip_processor(image, return_tensors="pt")
-    out = blip_model.generate(**inputs)
-    caption = blip_processor.decode(out[0], skip_special_tokens=True)
-    return caption
-
-# Calculate caption confidence score
-def calculate_caption_confidence(clip_model, preprocess, image, device, caption):
-    # Get image and text embeddings
-    image_embedding = get_image_embedding(clip_model, preprocess, image, device)
-    text_embedding = get_text_embedding(clip_model, caption, device)
+@app.route('/')
+def index():
+    db = get_db()
+    stats = db.get_system_stats()
+    recent = db.get_recent_images(5)
     
-    # Calculate cosine similarity
-    similarity = F.cosine_similarity(image_embedding, text_embedding, dim=-1)
-    return similarity.item()
-
-# Zero-shot classification
-def classify_image(model, preprocess, image, device, categories):
-    image_input = preprocess(image).unsqueeze(0).to(device)
-    text_inputs = clip.tokenize(categories).to(device)
+    # Convert labels from JSON string back to dict if they are not already a dict
+    for image in recent:
+        if isinstance(image['labels'], str):
+            image['labels'] = json.loads(image['labels'])
     
-    with torch.no_grad():
-        image_features = model.encode_image(image_input)
-        text_features = model.encode_text(text_inputs)
+    return render_template('index.html', stats=stats, recent_images=recent)
+
+def process_and_save_image(file):
+    """Process image through caption and classification pipeline"""
+    filepath = None
+    try:
+        # Save the uploaded file
+        filepath, filename = save_uploaded_file(file, UPLOAD_FOLDER)
         
-        # Normalize features
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        # Convert Windows path to forward slashes and make it relative to static
+        relative_path = f'/static/uploads/{filename}'
         
-        # Calculate similarity
-        similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+        print(f"File saved as: {relative_path}")  # Debug print
         
-    values, indices = similarity[0].topk(min(5, len(categories)))
-    
-    results = []
-    for value, index in zip(values, indices):
-        results.append((categories[index], value.item()))
-    
-    return results
+        # Generate caption
+        caption = captioner.generate_caption(filepath)
+        print(f"Generated caption: {caption}")
+        
+        # Classify image with default categories
+        classification_results = clip_manager.classify_image(filepath, DEFAULT_CATEGORIES)
+        print(f"Classification results: {classification_results}")
+        
+        # Filter labels with confidence above threshold
+        threshold = 0.2
+        labels = {
+            category: score 
+            for category, score in classification_results.items() 
+            if score > threshold
+        }
+        
+        if not labels:
+            labels = {"unclassified": 1.0}
+        
+        # Store in database with relative path
+        db = get_db()
+        image_id = db.add_image(relative_path, caption=caption, labels=labels)
+        
+        if not image_id:
+            raise Exception("Failed to save to database")
+            
+        return {
+            'success': True,
+            'image_id': image_id,
+            'filename': filename,
+            'caption': caption,
+            'labels': labels,
+            'path': relative_path
+        }
+        
+    except Exception as e:
+        print(f"Error in process_and_save_image: {str(e)}")
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
+        raise
 
-# Save image to database
-def save_to_database(image, embedding, caption, label):
-    # Generate unique ID
-    img_id = str(uuid.uuid4())
-    
-    # Save image
-    img_path = os.path.join(DATA_DIR, f"{img_id}.jpg")
-    image.save(img_path)
-    
-    # Store in session state
-    st.session_state.db_images[img_id] = {
-        'path': img_path,
-        'caption': caption,
-        'label': label,
-        'embedding': embedding.cpu().numpy(),
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'original_caption': caption  # Store original caption for reference
-    }
-    
-    return img_id
+@app.route('/caption', methods=['GET', 'POST'])
+def caption():
+    if request.method == 'POST':
+        if 'image' not in request.files:
+            return jsonify({
+                'success': False,
+                'error': 'No image uploaded'
+            }), 400
+            
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({
+                'success': False,
+                'error': 'No selected file'
+            }), 400
+            
+        try:
+            result = process_and_save_image(file)
+            return jsonify(result)
+            
+        except Exception as e:
+            print(f"Error in caption endpoint: {str(e)}")  # Debug print
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 400
+            
+    return render_template('caption.html')
 
-# Update caption in database
-def update_caption_in_database(img_id, new_caption, clip_model, preprocess, device):
-    if img_id in st.session_state.db_images:
-        # Get the image
-        img_path = st.session_state.db_images[img_id]['path']
-        image = Image.open(img_path)
+# Classification Endpoints
+@app.route('/classify', methods=['GET', 'POST'])
+def classify():
+    db = get_db()
+    if request.method == 'POST':
+        file = request.files['image']
+        categories = [c.strip() for c in request.form.get('categories', '').split(',') if c.strip()]
         
-        # Calculate confidence for new caption
-        new_confidence = calculate_caption_confidence(clip_model, preprocess, image, device, new_caption)
-        
-        # Calculate confidence for original caption
-        original_caption = st.session_state.db_images[img_id]['original_caption']
-        original_confidence = calculate_caption_confidence(clip_model, preprocess, image, device, original_caption)
-        
-        # Only update if new confidence is higher
-        if new_confidence > original_confidence:
-            st.session_state.db_images[img_id]['caption'] = new_caption
-            return True, new_confidence
-        else:
-            return False, new_confidence
-    return False, 0
+        try:
+            filepath, _ = save_uploaded_file(file, UPLOAD_FOLDER)
+            results = clip_manager.classify_image(filepath, categories)
+            chart_html = create_classification_chart(results)
+            return jsonify({
+                'success': True,
+                'results': results,
+                'chart': chart_html,
+                'image_url': f'/static/uploads/{os.path.basename(filepath)}'
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+    return render_template('classify.html')
 
-# Find similar images
-def find_similar_images(query_embedding, top_k=5):
-    if not st.session_state.db_images:
-        return []
+# Search Endpoints
+@app.route('/search/image', methods=['POST'])
+def search_by_image():
+    db = get_db()
+    if 'image' not in request.files:
+        return jsonify({'success': False, 'error': 'No image uploaded'}), 400
     
-    similarities = []
-    for img_id, data in st.session_state.db_images.items():
-        db_embedding = torch.tensor(data['embedding'])
-        similarity = F.cosine_similarity(query_embedding.cpu(), db_embedding, dim=-1)
-        similarities.append((img_id, similarity.item()))
-    
-    # Sort by similarity (descending)
-    similarities.sort(key=lambda x: x[1], reverse=True)
-    
-    # Return top-k results
-    return similarities[:top_k]
+    file = request.files['image']
+    try:
+        filepath, _ = save_uploaded_file(file, UPLOAD_FOLDER)
+        results = clip_manager.search_by_image(filepath, db.get_all_images())
+        
+        # Convert labels from string to dict for each result if they are not already a dict
+        for result in results:
+            if isinstance(result.get('labels'), str):
+                result['labels'] = json.loads(result['labels'])
+        
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
 
-# Process uploaded folder
-def process_uploaded_folder(folder_path, clip_model, preprocess, blip_processor, blip_model, device, categories):
-    total_files = 0
-    processed_files = 0
+@app.route('/search/text', methods=['POST'])
+def search_by_text():
+    db = get_db()
+    query = request.form.get('query', '').strip()
+    if not query:
+        return jsonify({'success': False, 'error': 'No search query provided'}), 400
     
-    # Count total image files
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                total_files += 1
-    
-    if total_files == 0:
-        return 0, 0
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    # Process each image file
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+    try:
+        print(f"Received query: {query}")  # Debug logging
+        all_images = db.get_all_images()
+        print(f"Number of images to search: {len(all_images)}")  # Debug logging
+        
+        results = clip_manager.search_by_text(query, all_images)
+        print(f"Found {len(results)} results")  # Debug logging
+        
+        for result in results:
+            print(f"Processing result: {result.get('id')}")  # Debug logging
+            if isinstance(result.get('labels'), str):
                 try:
-                    img_path = os.path.join(root, file)
-                    image = Image.open(img_path).convert("RGB")
-                    
-                    # Generate caption
-                    caption = generate_caption(image, blip_processor, blip_model)
-                    
-                    # Get image embedding
-                    embedding = get_image_embedding(clip_model, preprocess, image, device)
-                    
-                    # Classify image to get label
-                    label_results = classify_image(clip_model, preprocess, image, device, categories)
-                    top_label = label_results[0][0] if label_results else "unknown"
-                    
-                    # Save to database
-                    save_to_database(image, embedding, caption, top_label)
-                    
-                    processed_files += 1
-                    progress = processed_files / total_files
-                    progress_bar.progress(progress)
-                    status_text.text(f"Processed {processed_files}/{total_files} images")
-                except Exception as e:
-                    st.error(f"Error processing {file}: {str(e)}")
-    
-    progress_bar.empty()
-    status_text.empty()
-    
-    return total_files, processed_files
+                    result['labels'] = json.loads(result['labels'])
+                except json.JSONDecodeError as e:
+                    print(f"Error parsing labels for image {result.get('id')}: {e}")
+                    result['labels'] = {}  # Provide default empty dict
+        
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        print(f"Error in search_by_text: {str(e)}")  # Debug logging
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-# Main function
-def main():
-    # Sidebar
-    st.sidebar.title("CLIP Vision App")
-    app_mode = st.sidebar.selectbox(
-        "Choose a task", 
-        ["Image Captioning", "Image Classification", "Image Retrieval", "Database Management", "Bulk Upload"]
+@app.route('/search', methods=['GET'])
+def search():
+    return render_template('search.html')
+
+# Database Management Endpoints
+@app.route('/manage', methods=['GET'])
+def manage():
+    db = get_db()
+    images = db.get_all_images()
+    return render_template('manage.html', images=images)
+
+@app.route('/export/csv')
+def export_csv():
+    db = get_db()
+    images = db.get_all_images()
+    df = pd.DataFrame(images)
+    output = StringIO()
+    df.to_csv(output, index=False)
+    output.seek(0)
+    return send_file(
+        output,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name='image_database.csv'
     )
-    
-    # Load models
-    with st.spinner("Loading models..."):
-        clip_model, preprocess, device = load_clip_model()
-        blip_processor, blip_model = load_blip_model()
-    
-    # Define some common categories for classification
-    default_categories = [
-        "a photo of a dog", "a photo of a cat", "a photo of a car", 
-        "a photo of a bird", "a photo of a person", "a landscape photo",
-        "a photo of food", "a photo of a building", "a photo of a flower"
-    ]
-    
-    # Image Captioning
-    if app_mode == "Image Captioning":
-        st.title("Image Captioning")
-        st.write("Upload an image to generate a caption using BLIP model.")
-        
-        uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-        
-        if uploaded_file is not None:
-            image = Image.open(uploaded_file).convert("RGB")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.image(image, caption="Uploaded Image", use_container_width=True)
-            
-            with col2:
-                with st.spinner("Generating caption..."):
-                    # Generate caption
-                    caption = generate_caption(image, blip_processor, blip_model)
-                    st.write("**Caption:**", caption)
-                    
-                    # Calculate caption confidence
-                    confidence = calculate_caption_confidence(clip_model, preprocess, image, device, caption)
-                    st.write(f"**Confidence Score:** {confidence:.3f}")
-                    
-                    # Get image embedding
-                    embedding = get_image_embedding(clip_model, preprocess, image, device)
-                    
-                    # Option to edit caption
-                    with st.expander("Edit Caption"):
-                        new_caption = st.text_area("Edit the caption", value=caption)
-                        if st.button("Update Caption"):
-                            is_updated, new_confidence = update_caption_in_database(
-                                next(iter(st.session_state.db_images.keys())) if st.session_state.db_images else None,
-                                new_caption,
-                                clip_model,
-                                preprocess,
-                                device
-                            )
-                            
-                            if is_updated:
-                                st.success(f"Caption updated! New confidence: {new_confidence:.3f}")
-                                st.experimental_rerun()
-                            else:
-                                st.warning(f"Caption not updated. Confidence ({new_confidence:.3f}) not higher than original ({confidence:.3f})")
-                    
-                    # Option to save to database
-                    if st.button("Save to Database"):
-                        # Use first classification as label
-                        label_results = classify_image(clip_model, preprocess, image, device, default_categories)
-                        top_label = label_results[0][0] if label_results else "unknown"
-                        
-                        img_id = save_to_database(image, embedding, caption, top_label)
-                        st.success("Image saved to database!")
-                    
-                    # Option to download captioned image
-                    buffered = io.BytesIO()
-                    fig, ax = plt.subplots(figsize=(10, 10))
-                    ax.imshow(np.array(image))
-                    ax.text(10, image.height - 30, caption, fontsize=12, color='white', 
-                            bbox=dict(facecolor='black', alpha=0.7))
-                    ax.axis('off')
-                    plt.tight_layout()
-                    plt.savefig(buffered, format="jpg")
-                    img_str = base64.b64encode(buffered.getvalue()).decode()
-                    
-                    download_link = f'<a href="data:file/jpg;base64,{img_str}" download="captioned_image.jpg">Download Image with Caption</a>'
-                    st.markdown(download_link, unsafe_allow_html=True)
-    
-    # Image Classification
-    elif app_mode == "Image Classification":
-        st.title("Zero-Shot Image Classification")
-        st.write("Upload an image to classify it using CLIP's zero-shot classification.")
-        
-        # Input for custom categories
-        custom_categories = st.text_area(
-            "Enter custom categories (one per line)", 
-            "\n".join(default_categories)
-        )
-        categories = [cat.strip() for cat in custom_categories.split("\n") if cat.strip()]
-        
-        uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-        
-        if uploaded_file is not None:
-            image = Image.open(uploaded_file).convert("RGB")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.image(image, caption="Uploaded Image", use_container_width=True)
-            
-            with col2:
-                with st.spinner("Classifying image..."):
-                    # Classify image
-                    results = classify_image(clip_model, preprocess, image, device, categories)
-                    
-                    st.write("**Classification Results:**")
-                    
-                    # Create a bar chart for visualization
-                    labels = [result[0].replace("a photo of ", "") for result in results]
-                    scores = [result[1] * 100 for result in results]
-                    
-                    fig, ax = plt.subplots()
-                    bars = ax.barh(labels, scores, color='skyblue')
-                    ax.set_xlabel('Confidence (%)')
-                    ax.set_xlim(0, 100)
-                    for i, v in enumerate(scores):
-                        ax.text(v + 1, i, f"{v:.1f}%", va='center')
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                    
-                    # Get image embedding and caption
-                    embedding = get_image_embedding(clip_model, preprocess, image, device)
-                    caption = generate_caption(image, blip_processor, blip_model)
-                    
-                    # Option to save to database
-                    if st.button("Save to Database"):
-                        top_label = results[0][0] if results else "unknown"
-                        save_to_database(image, embedding, caption, top_label)
-                        st.success("Image saved to database!")
-    
-    # Image Retrieval
-    elif app_mode == "Image Retrieval":
-        st.title("Image Retrieval")
-        
-        retrieval_mode = st.radio("Retrieval Method", ["Image-to-Image", "Text-to-Image"])
-        
-        if retrieval_mode == "Image-to-Image":
-            st.write("Upload an image to find similar images in the database.")
-            
-            uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-            
-            if uploaded_file is not None:
-                query_image = Image.open(uploaded_file).convert("RGB")
-                
-                st.image(query_image, caption="Query Image", width=300)
-                
-                with st.spinner("Finding similar images..."):
-                    # Get image embedding
-                    query_embedding = get_image_embedding(clip_model, preprocess, query_image, device)
-                    
-                    # Find similar images
-                    similar_images = find_similar_images(query_embedding)
-                    
-                    if similar_images:
-                        st.write("**Similar Images:**")
-                        
-                        cols = st.columns(min(len(similar_images), 3))
-                        for i, (img_id, similarity) in enumerate(similar_images):
-                            col = cols[i % 3]
-                            img_data = st.session_state.db_images[img_id]
-                            img = Image.open(img_data["path"])
-                            
-                            with col:
-                                st.image(img, width=200)
-                                st.write(f"Similarity: {similarity:.2f}")
-                                st.write(f"Caption: {img_data['caption']}")
-                                st.write(f"Label: {img_data['label']}")
-                    else:
-                        st.write("No images in database yet!")
-        
-        else:  # Text-to-Image
-            st.write("Enter text to find similar images in the database.")
-            
-            query_text = st.text_input("Enter query text")
-            
-            if query_text and st.button("Search"):
-                with st.spinner("Finding similar images..."):
-                    # Get text embedding
-                    query_embedding = get_text_embedding(clip_model, query_text, device)
-                    
-                    # Find similar images
-                    similar_images = find_similar_images(query_embedding)
-                    
-                    if similar_images:
-                        st.write("**Similar Images:**")
-                        
-                        cols = st.columns(min(len(similar_images), 3))
-                        for i, (img_id, similarity) in enumerate(similar_images):
-                            col = cols[i % 3]
-                            img_data = st.session_state.db_images[img_id]
-                            img = Image.open(img_data["path"])
-                            
-                            with col:
-                                st.image(img, width=200)
-                                st.write(f"Similarity: {similarity:.2f}")
-                                st.write(f"Caption: {img_data['caption']}")
-                                st.write(f"Label: {img_data['label']}")
-                    else:
-                        st.write("No images in database yet!")
-    
-    # Database Management
-    elif app_mode == "Database Management":
-        st.title("Database Management")
-        
-        if not st.session_state.db_images:
-            st.write("Database is empty. Add images through other features.")
-        else:
-            st.write(f"Database contains {len(st.session_state.db_images)} images.")
-            
-            # Filter options
-            filter_option = st.selectbox(
-                "Filter by", 
-                ["All", "Caption", "Label"]
-            )
-            
-            filtered_images = {}
-            
-            if filter_option == "All":
-                filtered_images = st.session_state.db_images
-            elif filter_option == "Caption":
-                search_term = st.text_input("Search in captions")
-                if search_term:
-                    filtered_images = {
-                        img_id: data for img_id, data in st.session_state.db_images.items()
-                        if search_term.lower() in data['caption'].lower()
-                    }
-                else:
-                    filtered_images = st.session_state.db_images
-            elif filter_option == "Label":
-                labels = list(set(data['label'] for data in st.session_state.db_images.values()))
-                selected_label = st.selectbox("Select label", ["All"] + labels)
-                
-                if selected_label == "All":
-                    filtered_images = st.session_state.db_images
-                else:
-                    filtered_images = {
-                        img_id: data for img_id, data in st.session_state.db_images.items()
-                        if data['label'] == selected_label
-                    }
-            
-            # Display images in grid
-            cols_per_row = 3
-            for i in range(0, len(filtered_images), cols_per_row):
-                cols = st.columns(cols_per_row)
-                
-                for j in range(cols_per_row):
-                    if i + j < len(filtered_images):
-                        img_id = list(filtered_images.keys())[i + j]
-                        img_data = filtered_images[img_id]
-                        
-                        with cols[j]:
-                            img = Image.open(img_data["path"])
-                            st.image(img, width=200)
-                            st.write(f"Caption: {img_data['caption']}")
-                            st.write(f"Label: {img_data['label']}")
-                            st.write(f"Date: {img_data['timestamp']}")
-                            
-                            # Edit caption button
-                            with st.expander("Edit Caption"):
-                                new_caption = st.text_area("Edit caption", value=img_data['caption'], key=f"edit_{img_id}")
-                                if st.button("Update", key=f"update_{img_id}"):
-                                    is_updated, new_confidence = update_caption_in_database(
-                                        img_id,
-                                        new_caption,
-                                        clip_model,
-                                        preprocess,
-                                        device
-                                    )
-                                    
-                                    if is_updated:
-                                        st.success(f"Caption updated! New confidence: {new_confidence:.3f}")
-                                        st.experimental_rerun()
-                                    else:
-                                        original_confidence = calculate_caption_confidence(
-                                            clip_model,
-                                            preprocess,
-                                            img,
-                                            device,
-                                            img_data['original_caption']
-                                        )
-                                        st.warning(f"Caption not updated. Confidence ({new_confidence:.3f}) not higher than original ({original_confidence:.3f})")
-                            
-                            # Download button
-                            buffered = io.BytesIO()
-                            fig, ax = plt.subplots(figsize=(10, 10))
-                            ax.imshow(np.array(img))
-                            ax.text(10, img.height - 30, img_data['caption'], fontsize=12, color='white', 
-                                    bbox=dict(facecolor='black', alpha=0.7))
-                            ax.axis('off')
-                            plt.tight_layout()
-                            plt.savefig(buffered, format="jpg")
-                            img_str = base64.b64encode(buffered.getvalue()).decode()
-                            
-                            download_link = f'<a href="data:file/jpg;base64,{img_str}" download="image_{img_id[:8]}.jpg">Download</a>'
-                            st.markdown(download_link, unsafe_allow_html=True)
-                            
-                            # Delete button
-                            if st.button(f"Delete", key=f"del_{img_id}"):
-                                if os.path.exists(img_data["path"]):
-                                    os.remove(img_data["path"])
-                                del st.session_state.db_images[img_id]
-                                st.experimental_rerun()
-            
-            # Export database
-            if st.button("Export Database"):
-                # Create CSV with metadata
-                data = []
-                for img_id, img_data in st.session_state.db_images.items():
-                    data.append({
-                        'id': img_id,
-                        'path': img_data['path'],
-                        'caption': img_data['caption'],
-                        'label': img_data['label'],
-                        'timestamp': img_data['timestamp']
-                    })
-                
-                df = pd.DataFrame(data)
-                csv = df.to_csv(index=False)
-                csv_bytes = csv.encode()
-                
-                st.download_button(
-                    label="Download CSV",
-                    data=csv_bytes,
-                    file_name="image_database.csv",
-                    mime="text/csv"
-                )
-            
-            # Clear database
-            if st.button("Clear Database"):
-                # Delete all files
-                for img_data in st.session_state.db_images.values():
-                    if os.path.exists(img_data["path"]):
-                        os.remove(img_data["path"])
-                
-                # Clear session state
-                st.session_state.db_images = {}
-                st.success("Database cleared!")
-                st.experimental_rerun()
-    
-    # Bulk Upload
-    elif app_mode == "Bulk Upload":
-        st.title("Bulk Image Upload")
-        st.write("Upload a folder containing images to process them all at once.")
-        
-        uploaded_folder = st.file_uploader(
-            "Choose a folder with images", 
-            type=None, 
-            accept_multiple_files=True
-        )
-        
-        if uploaded_folder and st.button("Process Folder"):
-            # Create a temporary directory to store uploaded files
-            temp_dir = os.path.join(DATA_DIR, "temp_upload")
-            os.makedirs(temp_dir, exist_ok=True)
-            
-            # Save all uploaded files to the temp directory
-            for uploaded_file in uploaded_folder:
-                if uploaded_file.name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    file_path = os.path.join(temp_dir, uploaded_file.name)
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-            
-            # Process the folder
-            total_files, processed_files = process_uploaded_folder(
-                temp_dir, 
-                clip_model, 
-                preprocess, 
-                blip_processor, 
-                blip_model, 
-                device, 
-                default_categories
-            )
-            
-            # Clean up temp directory
-            shutil.rmtree(temp_dir)
-            
-            st.success(f"Processed {processed_files}/{total_files} images successfully!")
-            st.experimental_rerun()
 
-if __name__ == "__main__":
-    main()
+@app.route('/delete/<int:image_id>', methods=['DELETE'])
+def delete_image(image_id):
+    db = get_db()
+    try:
+        image = db.get_image(image_id)
+        if not image:
+            return jsonify({'success': False, 'error': 'Image not found'}), 404
+        
+        # Get the file path and remove the static prefix for proper file deletion
+        file_path = image['path']
+        if file_path.startswith('/static/'):
+            file_path = file_path[7:]  # Remove '/static/' prefix
+        full_path = os.path.join(os.getcwd(), 'static', file_path)
+        
+        # Delete the file first
+        try:
+            os.remove(full_path)
+        except OSError as e:
+            print(f"Error deleting file: {e}")
+            # Continue even if file doesn't exist
+            
+        # Delete from database
+        db.delete_image(image_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Error in delete_image: {str(e)}")  # Add logging
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/save-caption', methods=['POST'])
+def save_caption():
+    db = get_db()
+    try:
+        # Check if the request has JSON content
+        if not request.is_json:
+            print("Request Content-Type:", request.headers.get('Content-Type'))
+            print("Request data:", request.get_data())
+            return jsonify({
+                'success': False,
+                'error': 'Content-Type must be application/json'
+            }), 415
+
+        data = request.get_json(force=True)  # Try to force JSON parsing
+        print("Received data:", data)  # Debug print
+        
+        image_id = data.get('image_id')
+        new_caption = data.get('caption')
+
+        if image_id is None or new_caption is None:
+            return jsonify({
+                'success': False,
+                'error': 'Missing image_id or caption'
+            }), 400
+
+        # Convert image_id to int if it's a string
+        try:
+            image_id = int(image_id)
+        except (TypeError, ValueError):
+            return jsonify({
+                'success': False,
+                'error': f'Invalid image_id format: {image_id}'
+            }), 400
+
+        # Update the caption
+        if db.update_caption(image_id, new_caption):
+            return jsonify({
+                'success': True,
+                'message': 'Caption updated successfully',
+                'caption': new_caption
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to update caption in database'
+            }), 400
+
+    except Exception as e:
+        print(f"Error in save_caption: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
+@app.route('/debug/database')
+def debug_database():
+    db = get_db()
+    images = db.get_all_images()
+    return jsonify({
+        'image_count': len(images),
+        'images': images
+    })
+
+if __name__ == '__main__':
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    app.run(debug=True, port=5001)

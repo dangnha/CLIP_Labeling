@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2 class="mb-4">Image Processing</h2>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Upload Image</h5>
+                </div>
+                <div class="card-body">
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="imageInput" class="form-label">Select Image</label>
+                            <input type="file" class="form-control" id="imageInput" name="image" accept="image/*" required>
+                        </div>
+                        <div class="preview-container mb-3" style="display: none;">
+                            <img id="imagePreview" class="img-fluid rounded" alt="Preview">
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Process Image
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card mb-4" id="resultCard" style="display: none;">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Processing Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="result-section">
+                        <h6>Caption:</h6>
+                        <p id="captionResult" class="mb-3"></p>
+                        
+                        <h6>Labels:</h6>
+                        <div id="labelsResult" class="mb-3"></div>
+                        
+                        <div class="text-end">
+                            <a href="/manage" class="btn btn-secondary">
+                                <i class="bi bi-database"></i> Go to Database
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Image preview
+    $('#imageInput').change(function(e) {
+        if (this.files && this.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                $('#imagePreview').attr('src', e.target.result);
+                $('.preview-container').show();
+            }
+            reader.readAsDataURL(this.files[0]);
+        }
+    });
+
+    // Form submission
+    $('#uploadForm').submit(function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(this);
+        const submitBtn = $(this).find('button[type="submit"]');
+        
+        // Disable submit button and show loading state
+        submitBtn.prop('disabled', true)
+            .html('<span class="spinner-border spinner-border-sm"></span> Processing...');
+        
+        $.ajax({
+            url: '/caption',
+            type: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function(response) {
+                if (response.success) {
+                    // Show results
+                    $('#captionResult').text(response.caption);
+                    
+                    // Display labels with confidence bars
+                    const labelsHtml = Object.keys(response.labels)
+                        .map(label => `
+                            <div class="label-item mb-2">
+                                <div class="d-flex justify-content-between">
+                                    <span>${label}</span>
+                                    <small>${(response.labels[label] * 100).toFixed(1)}%</small>
+                                </div>
+                                <div class="progress" style="height: 4px;">
+                                    <div class="progress-bar" role="progressbar" 
+                                         style="width: ${response.labels[label] * 100}%"></div>
+                                </div>
+                            </div>
+                        `).join('');
+                    
+                    $('#labelsResult').html(labelsHtml);
+                    $('#resultCard').fadeIn();
+                    
+                    // Show success notification
+                    toastr.success('Image successfully processed and saved!');
+                    
+                } else {
+                    toastr.error('Error: ' + response.error);
+                }
+            },
+            error: function(xhr) {
+                let errorMessage = 'Error processing image';
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    errorMessage = response.error || errorMessage;
+                } catch(e) {}
+                toastr.error(errorMessage);
+            },
+            complete: function() {
+                // Reset button state
+                submitBtn.prop('disabled', false)
+                    .html('<i class="bi bi-upload"></i> Process Image');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+{% endblock %}

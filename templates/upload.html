@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">Upload New Image</h4>
+            </div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data" action="{{ url_for('upload') }}">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">Image File</label>
+                        <input class="form-control" type="file" name="file" id="file" required>
+                        <div class="form-text">Allowed formats: JPG, PNG, GIF, WEBP (max 16MB)</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="caption" class="form-label">Caption (optional)</label>
+                        <textarea class="form-control" name="caption" id="caption" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Upload
+                        </button>
+                        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                            Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
