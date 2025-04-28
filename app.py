@@ -218,24 +218,26 @@ def classify():
             # Get classification results
             results = clip_manager.classify_image(filepath, categories_to_use)
             
-            # Sort results by score and take top results above threshold
-            threshold = 0.5
-            sorted_results = {k: v for k, v in results.items() if v > threshold}
-            sorted_results = dict(sorted(sorted_results.items(), key=lambda x: x[1], reverse=True))
+            # Sort all results by score (no threshold)
+            sorted_results = dict(sorted(results.items(), key=lambda x: x[1], reverse=True))
             
-            # If no categories meet the threshold, take the highest scoring one
-            if not sorted_results:
-                top_category, top_score = max(results.items(), key=lambda x: x[1])
-                sorted_results = {top_category: top_score}
-            
-            # Create visualization
+            # Create visualization for all results
             chart_html = create_classification_chart(sorted_results)
+            
+            # Generate explanation text
+            top_category, top_score = next(iter(sorted_results.items()))
+            explanation = (
+                f"The bar chart above shows the classification scores for each category. "
+                f"The top prediction is '<b>{top_category}</b>' with a confidence of <b>{top_score*100:.1f}%</b>. "
+                f"Other categories are shown in descending order of confidence."
+            )
             
             return jsonify({
                 'success': True,
                 'results': sorted_results,
                 'chart': chart_html,
-                'image_url': f'/static/uploads/{os.path.basename(filepath)}'
+                'image_url': f'/static/uploads/{os.path.basename(filepath)}',
+                'explanation': explanation
             })
             
         except Exception as e:
