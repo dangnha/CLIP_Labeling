@@ -234,3 +234,36 @@
         transform: translateY(0);
     }
 }
+
+.comparison-container .progress {
+    height: 8px;
+    margin-top: 5px;
+}
+
+.comparison-container .progress-bar {
+    transition: width 0.6s ease;
+}
+
+.old-similarity {
+    background-color: #6c757d;
+}
+
+.new-similarity {
+    background-color: #28a745;
+}
+
+.verification-message {
+    margin-top: 1rem;
+    font-size: 0.9rem;
+}
+
+#captionVerificationModal .modal-body {
+    padding: 1.5rem;
+}
+
+.caption-text {
+    background: #f8f9fa;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+}

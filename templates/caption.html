@@ -1,135 +1,297 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container">
-    <h2 class="mb-4">Image Processing</h2>
+<div class="container mt-4">
+    <h2>Image Captioning</h2>
     
-    <div class="row">
-        <div class="col-md-6">
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h5 class="card-title mb-0">Upload Image</h5>
+    <!-- Upload Form -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form id="uploadForm" onsubmit="handleUpload(event)">
+                <div class="mb-3">
+                    <label for="image" class="form-label">Choose an image</label>
+                    <input type="file" class="form-control" id="image" name="image" accept="image/*" required>
                 </div>
-                <div class="card-body">
-                    <form id="uploadForm" enctype="multipart/form-data">
-                        <div class="mb-3">
-                            <label for="imageInput" class="form-label">Select Image</label>
-                            <input type="file" class="form-control" id="imageInput" name="image" accept="image/*" required>
-                        </div>
-                        <div class="preview-container mb-3" style="display: none;">
-                            <img id="imagePreview" class="img-fluid rounded" alt="Preview">
-                        </div>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-upload"></i> Process Image
-                        </button>
-                    </form>
-                </div>
-            </div>
+                <button type="submit" class="btn btn-primary">Generate Caption</button>
+            </form>
         </div>
-        
-        <div class="col-md-6">
-            <div class="card mb-4" id="resultCard" style="display: none;">
-                <div class="card-header">
-                    <h5 class="card-title mb-0">Processing Results</h5>
+    </div>
+
+    <!-- Preview Section -->
+    <div id="previewSection" style="display: none;" class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <img id="previewImage" class="img-fluid rounded" alt="Uploaded image">
                 </div>
-                <div class="card-body">
-                    <div class="result-section">
-                        <h6>Caption:</h6>
-                        <p id="captionResult" class="mb-3"></p>
-                        
-                        <h6>Labels:</h6>
-                        <div id="labelsResult" class="mb-3"></div>
-                        
-                        <div class="text-end">
-                            <a href="/manage" class="btn btn-secondary">
-                                <i class="bi bi-database"></i> Go to Database
-                            </a>
+                <div class="col-md-6">
+                    <h4>Generated Caption:</h4>
+                    <p id="generatedCaption" class="lead"></p>
+                    
+                    <div class="mb-3">
+                        <label for="editableCaption" class="form-label">Edit Caption (optional):</label>
+                        <textarea id="editableCaption" class="form-control" rows="3"></textarea>
+                        <div class="mt-2 d-flex align-items-center gap-2">
+                            <button id="verifyButton" onclick="verifyCaption()" class="btn btn-info">
+                                <span id="verifySpinner" class="spinner-border spinner-border-sm me-2" style="display:none;" role="status" aria-hidden="true"></span>
+                                Verify Caption
+                            </button>
+                            <button id="forceSaveButton" onclick="saveToDatabase(true)" class="btn btn-warning" style="display:none;">
+                                <i class="bi bi-exclamation-triangle"></i> Force Save Anyway
+                            </button>
                         </div>
                     </div>
+
+                    <!-- Caption Verification Results -->
+                    <div id="verificationResults" style="display: none;" class="alert mb-3">
+                        <div class="d-flex align-items-center gap-2">
+                            <span id="verificationIcon"></span>
+                            <div>
+                                <h5 class="mb-1">Caption Verification Results:</h5>
+                                <p class="mb-1">Original Caption Score: <span id="originalScore"></span></p>
+                                <p class="mb-1">New Caption Score: <span id="newScore"></span></p>
+                                <p id="verificationMessage" class="mb-0"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="saveButton" onclick="saveToDatabase()" class="btn btn-success" disabled>Save to Database</button>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- Result Section -->
+    <div id="resultSection" style="display: none;" class="alert alert-success">
+        <h4>Image Saved Successfully!</h4>
+        <p>Labels: <span id="assignedLabels"></span></p>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" style="display: none;" class="text-center">
+        <div class="spinner-border text-primary mb-2" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <div id="loadingStatus" class="text-primary"></div>
+    </div>
 </div>
 
-{% block scripts %}
 <script>
-$(document).ready(function() {
-    // Image preview
-    $('#imageInput').change(function(e) {
-        if (this.files && this.files[0]) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                $('#imagePreview').attr('src', e.target.result);
-                $('.preview-container').show();
-            }
-            reader.readAsDataURL(this.files[0]);
-        }
-    });
+let currentImageData = null;
+let originalCaption = null;
+let captionVerified = false;
 
-    // Form submission
-    $('#uploadForm').submit(function(e) {
-        e.preventDefault();
-        
-        const formData = new FormData(this);
-        const submitBtn = $(this).find('button[type="submit"]');
-        
-        // Disable submit button and show loading state
-        submitBtn.prop('disabled', true)
-            .html('<span class="spinner-border spinner-border-sm"></span> Processing...');
-        
-        $.ajax({
-            url: '/caption',
-            type: 'POST',
-            data: formData,
-            processData: false,
-            contentType: false,
-            success: function(response) {
-                if (response.success) {
-                    // Show results
-                    $('#captionResult').text(response.caption);
-                    
-                    // Display labels with confidence bars
-                    const labelsHtml = Object.keys(response.labels)
-                        .map(label => `
-                            <div class="label-item mb-2">
-                                <div class="d-flex justify-content-between">
-                                    <span>${label}</span>
-                                    <small>${(response.labels[label] * 100).toFixed(1)}%</small>
-                                </div>
-                                <div class="progress" style="height: 4px;">
-                                    <div class="progress-bar" role="progressbar" 
-                                         style="width: ${response.labels[label] * 100}%"></div>
-                                </div>
-                            </div>
-                        `).join('');
-                    
-                    $('#labelsResult').html(labelsHtml);
-                    $('#resultCard').fadeIn();
-                    
-                    // Show success notification
-                    toastr.success('Image successfully processed and saved!');
-                    
-                } else {
-                    toastr.error('Error: ' + response.error);
-                }
-            },
-            error: function(xhr) {
-                let errorMessage = 'Error processing image';
-                try {
-                    const response = JSON.parse(xhr.responseText);
-                    errorMessage = response.error || errorMessage;
-                } catch(e) {}
-                toastr.error(errorMessage);
-            },
-            complete: function() {
-                // Reset button state
-                submitBtn.prop('disabled', false)
-                    .html('<i class="bi bi-upload"></i> Process Image');
-            }
-        });
+function showLoading(message) {
+    document.getElementById('loadingSpinner').style.display = 'block';
+    document.getElementById('loadingStatus').textContent = message;
+}
+
+function hideLoading() {
+    document.getElementById('loadingSpinner').style.display = 'none';
+    document.getElementById('loadingStatus').textContent = '';
+}
+
+function handleUpload(event) {
+    event.preventDefault();
+    showLoading('Generating caption...');
+    
+    const formData = new FormData(event.target);
+    
+    fetch('/caption', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoading();
+        if (data.success) {
+            currentImageData = data;
+            originalCaption = data.caption;
+            
+            // Show preview section
+            document.getElementById('previewSection').style.display = 'block';
+            document.getElementById('resultSection').style.display = 'none';
+            document.getElementById('verificationResults').style.display = 'none';
+            
+            // Update preview
+            document.getElementById('previewImage').src = data.path;
+            document.getElementById('generatedCaption').textContent = data.caption;
+            document.getElementById('editableCaption').value = data.caption;
+            
+            // Enable save button if using original caption
+            document.getElementById('saveButton').disabled = false;
+            captionVerified = true;
+        } else {
+            toastr.error(data.error || 'Error generating caption');
+        }
+    })
+    .catch(error => {
+        hideLoading();
+        console.error('Error:', error);
+        toastr.error('Error generating caption');
     });
+}
+
+function verifyCaption() {
+    const newCaption = document.getElementById('editableCaption').value.trim();
+    if (!newCaption || !currentImageData) return;
+
+    // If caption hasn't changed, no need to verify
+    if (newCaption === originalCaption) {
+        document.getElementById('verificationResults').style.display = 'none';
+        document.getElementById('saveButton').disabled = false;
+        document.getElementById('forceSaveButton').style.display = 'none';
+        captionVerified = true;
+        return;
+    }
+
+    // Show spinner on button
+    document.getElementById('verifySpinner').style.display = 'inline-block';
+    document.getElementById('verifyButton').disabled = true;
+    showLoading('Verifying caption...');
+
+    fetch('/verify-caption', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            image_path: currentImageData.path,
+            original_caption: originalCaption,
+            new_caption: newCaption
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoading();
+        document.getElementById('verifySpinner').style.display = 'none';
+        document.getElementById('verifyButton').disabled = false;
+
+        const verificationResults = document.getElementById('verificationResults');
+        const verificationMessage = document.getElementById('verificationMessage');
+        const verificationIcon = document.getElementById('verificationIcon');
+        document.getElementById('originalScore').textContent = data.old_similarity !== undefined ? data.old_similarity.toFixed(3) : '';
+        document.getElementById('newScore').textContent = data.new_similarity !== undefined ? data.new_similarity.toFixed(3) : '';
+
+        if (data.success) {
+            if (data.is_better) {
+                verificationResults.className = 'alert alert-success mb-3';
+                verificationIcon.innerHTML = '<i class="bi bi-check-circle-fill text-success fs-4"></i>';
+                verificationMessage.textContent = 'The new caption is better than the original!';
+                document.getElementById('saveButton').disabled = false;
+                document.getElementById('forceSaveButton').style.display = 'none';
+                captionVerified = true;
+            } else {
+                verificationResults.className = 'alert alert-warning mb-3';
+                verificationIcon.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning fs-4"></i>';
+                verificationMessage.textContent = 'The original caption seems better. You can still force save the new caption if you prefer.';
+                document.getElementById('saveButton').disabled = true;
+                document.getElementById('forceSaveButton').style.display = 'inline-block';
+                captionVerified = false;
+            }
+            verificationResults.style.display = 'block';
+        } else {
+            verificationResults.className = 'alert alert-danger mb-3';
+            verificationIcon.innerHTML = '<i class="bi bi-x-circle-fill text-danger fs-4"></i>';
+            verificationMessage.textContent = data.error || 'Error verifying caption';
+            document.getElementById('saveButton').disabled = true;
+            document.getElementById('forceSaveButton').style.display = 'none';
+            verificationResults.style.display = 'block';
+            captionVerified = false;
+        }
+    })
+    .catch(error => {
+        hideLoading();
+        document.getElementById('verifySpinner').style.display = 'none';
+        document.getElementById('verifyButton').disabled = false;
+        console.error('Error:', error);
+        toastr.error('Error verifying caption');
+    });
+}
+
+function saveToDatabase(forceUpdate = false) {
+    if (!currentImageData || (!captionVerified && !forceUpdate)) return;
+
+    showLoading('Classifying image...');
+
+    const finalCaption = document.getElementById('editableCaption').value;
+
+    fetch('/save-to-database', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            filepath: currentImageData.temp_filepath,
+            filename: currentImageData.filename,
+            caption: finalCaption,
+            force_update: forceUpdate
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoading();
+        if (data.success) {
+            // Show success message
+            document.getElementById('resultSection').style.display = 'block';
+            document.getElementById('previewSection').style.display = 'none';
+
+            // Display labels
+            const labelsHtml = Object.entries(data.labels)
+                .map(([label, score]) => `<span class="badge bg-primary me-1">${label}: ${(score * 100).toFixed(1)}%</span>`)
+                .join('');
+            document.getElementById('assignedLabels').innerHTML = labelsHtml;
+
+            // Reset form and state
+            document.getElementById('uploadForm').reset();
+            currentImageData = null;
+            originalCaption = null;
+            captionVerified = false;
+
+            toastr.success('Image saved successfully!');
+        } else {
+            toastr.error(data.error || 'Error saving to database');
+        }
+    })
+    .catch(error => {
+        hideLoading();
+        console.error('Error:', error);
+        toastr.error('Error saving to database');
+    });
+}
+
+// Add event listener for caption changes
+document.getElementById('editableCaption').addEventListener('input', function() {
+    const newCaption = this.value.trim();
+    if (newCaption !== originalCaption) {
+        document.getElementById('saveButton').disabled = true;
+        document.getElementById('forceSaveButton').style.display = 'none';
+        captionVerified = false;
+        document.getElementById('verificationResults').style.display = 'none';
+    } else {
+        document.getElementById('saveButton').disabled = false;
+        document.getElementById('forceSaveButton').style.display = 'none';
+        captionVerified = true;
+    }
 });
 </script>
-{% endblock %}
+
+<style>
+#previewImage {
+    max-height: 400px;
+    width: auto;
+}
+
+.badge {
+    font-size: 0.9em;
+}
+
+#verificationResults {
+    font-size: 0.9em;
+}
+
+.alert {
+    border-radius: 8px;
+}
+</style>
 {% endblock %}

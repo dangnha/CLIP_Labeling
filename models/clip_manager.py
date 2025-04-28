@@ -67,3 +67,29 @@ class CLIPManager:
             return sorted(results, key=lambda x: x['similarity'], reverse=True)[:10]
         except Exception as e:
             raise Exception(f"Text search failed: {str(e)}")
+
+    def get_similarity(self, image_path, text):
+        """Calculate similarity between image and text using CLIP"""
+        try:
+            # Load and preprocess image
+            image = self.preprocess(Image.open(image_path)).unsqueeze(0).to(self.device)
+            
+            # Encode text
+            text_tokens = self.tokenizer([text]).to(self.device)
+            
+            with torch.no_grad():
+                # Get embeddings
+                image_features = self.model.encode_image(image)
+                text_features = self.model.encode_text(text_tokens)
+                
+                # Normalize features
+                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+                
+                # Calculate similarity
+                similarity = (image_features @ text_features.T).item()
+                
+            return similarity
+        except Exception as e:
+            print(f"Error calculating similarity: {str(e)}")
+            return 0.0

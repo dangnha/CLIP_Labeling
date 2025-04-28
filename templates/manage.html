@@ -72,9 +72,48 @@
     </div>
 </div>
 
+<!-- Add this modal to your HTML -->
+<div class="modal fade" id="captionVerificationModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Caption Verification</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="comparison-container">
+                    <div class="mb-3">
+                        <label class="form-label">Current Caption:</label>
+                        <p class="old-caption-text"></p>
+                        <div class="progress">
+                            <div class="progress-bar old-similarity" role="progressbar"></div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">New Caption:</label>
+                        <p class="new-caption-text"></p>
+                        <div class="progress">
+                            <div class="progress-bar new-similarity" role="progressbar"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="alert alert-warning verification-message" style="display: none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary force-save-btn">Save Anyway</button>
+                <button type="button" class="btn btn-success save-verified-btn">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% block scripts %}
 <script>
 $(document).ready(function() {
+    let currentEditData = null;
+    const verificationModal = new bootstrap.Modal(document.getElementById('captionVerificationModal'));
+
     // Search functionality
     $('#searchInput').on('input', function() {
         let searchTerm = $(this).val().toLowerCase();
@@ -141,51 +180,112 @@ $(document).ready(function() {
         const container = $(this).closest('.caption-container');
         const textElement = container.find('.caption-text');
         const editor = container.find('.caption-editor');
-        const editContainer = container.find('.caption-edit-container');
         const imageId = textElement.data('image-id');
         const newCaption = editor.val().trim();
 
-        // Disable the save button while processing
-        const saveBtn = $(this);
-        saveBtn.prop('disabled', true);
-        saveBtn.html('<span class="spinner-border spinner-border-sm"></span> Saving...');
+        // Store current edit data
+        currentEditData = {
+            container: container,
+            textElement: textElement,
+            editor: editor,
+            imageId: imageId,
+            newCaption: newCaption
+        };
 
-        // Create the request data
-        const requestData = JSON.stringify({
-            image_id: imageId,
-            caption: newCaption
-        });
-
-        console.log('Sending data:', requestData); // Debug log
-
-        fetch('/save-caption', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: requestData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                textElement.text(newCaption || 'No caption');
-                textElement.show();
-                editContainer.hide();
-            } else {
-                alert('Error saving caption: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Error saving caption: ' + error.message);
-        })
-        .finally(() => {
-            // Reset button state
-            saveBtn.prop('disabled', false);
-            saveBtn.html('Save');
-        });
+        // Verify caption first
+        verifyCaption(imageId, newCaption);
     });
+
+    function verifyCaption(imageId, newCaption) {
+        $.ajax({
+            url: '/verify-caption',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                image_id: imageId,
+                caption: newCaption
+            }),
+            success: function(response) {
+                if (response.success) {
+                    showVerificationModal(response);
+                } else {
+                    toastr.error('Error verifying caption: ' + response.error);
+                }
+            },
+            error: function(xhr) {
+                toastr.error('Error verifying caption');
+            }
+        });
+    }
+
+    function showVerificationModal(data) {
+        const modal = $('#captionVerificationModal');
+        
+        // Update modal content
+        modal.find('.old-caption-text').text(data.old_caption || 'No previous caption');
+        modal.find('.new-caption-text').text(currentEditData.newCaption);
+        
+        // Update progress bars
+        modal.find('.old-similarity')
+            .css('width', `${data.old_similarity * 100}%`)
+            .text(`${(data.old_similarity * 100).toFixed(1)}%`);
+        
+        modal.find('.new-similarity')
+            .css('width', `${data.new_similarity * 100}%`)
+            .text(`${(data.new_similarity * 100).toFixed(1)}%`);
+        
+        // Show/hide buttons based on verification result
+        modal.find('.save-verified-btn').toggle(data.is_better);
+        modal.find('.force-save-btn').toggle(!data.is_better);
+        
+        // Show message if new caption is worse
+        const messageDiv = modal.find('.verification-message');
+        if (!data.is_better) {
+            messageDiv.html('The current caption appears to be more accurate. Are you sure you want to update it?').show();
+        } else {
+            messageDiv.hide();
+        }
+        
+        verificationModal.show();
+    }
+
+    // Handle verified save
+    $('.save-verified-btn').click(function() {
+        saveCaption(currentEditData, false);
+        verificationModal.hide();
+    });
+
+    // Handle force save
+    $('.force-save-btn').click(function() {
+        saveCaption(currentEditData, true);
+        verificationModal.hide();
+    });
+
+    function saveCaption(data, force = false) {
+        $.ajax({
+            url: '/save-caption',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                image_id: data.imageId,
+                caption: data.newCaption,
+                force_update: force
+            }),
+            success: function(response) {
+                if (response.success) {
+                    data.textElement.text(data.newCaption);
+                    data.textElement.show();
+                    data.container.find('.caption-edit-container').hide();
+                    toastr.success('Caption updated successfully');
+                } else {
+                    toastr.error('Error saving caption: ' + response.error);
+                }
+            },
+            error: function(xhr) {
+                toastr.error('Error saving caption');
+            }
+        });
+    }
 });
 </script>
 {% endblock %}
