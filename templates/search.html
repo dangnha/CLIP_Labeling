@@ -94,8 +94,11 @@ function displaySearchResults(data, queryType) {
     // Clear previous results
     resultsContainer.innerHTML = '';
     
+    // Sort results by similarity_score descending
+    const sortedResults = data.results.slice().sort((a, b) => b.similarity_score - a.similarity_score);
+
     // Display results
-    data.results.forEach(result => {
+    sortedResults.forEach(result => {
         const col = document.createElement('div');
         col.className = 'col-md-4 mb-4';
         
