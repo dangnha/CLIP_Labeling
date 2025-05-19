@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, flash
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, flash, Response, stream_with_context
 from models.blip_captioner import BLIPCaptioner
 from models.clip_manager import CLIPManager
 from utils.database import ImageDatabase
@@ -433,6 +433,39 @@ def delete_image(image_id):
         print(f"Error in delete_image: {str(e)}")  # Add logging
         return jsonify({'success': False, 'error': str(e)}), 400
 
+@app.route('/delete-all', methods=['POST'])
+def delete_all_images():
+    db = get_db()
+    try:
+        # Get all images first to delete their files
+        images = db.get_all_images()
+        
+        # Delete all image files
+        for image in images:
+            file_path = image['path']
+            if file_path.startswith('/static/'):
+                file_path = file_path[7:]  # Remove '/static/' prefix
+            full_path = os.path.join(os.getcwd(), 'static', file_path)
+            try:
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+            except OSError as e:
+                print(f"Error deleting file {full_path}: {e}")
+        
+        # Delete all records from database
+        db.delete_all_images()
+        
+        return jsonify({
+            'success': True,
+            'message': 'All images have been deleted successfully'
+        })
+    except Exception as e:
+        print(f"Error in delete_all_images: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 import os
 import torch
 import clip
@@ -517,122 +550,6 @@ def verify_caption():
         print(f"Error in verify_caption: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# @app.route('/verify-caption', methods=['POST'])
-# def verify_caption():
-#     try:
-#         data = request.get_json()
-#         image_path = data.get('image_path')
-#         original_caption = data.get('original_caption')
-#         new_caption = data.get('new_caption')
-
-#         print(f"Received data: {data}")
-#         print(f"Image Path: {image_path}")
-#         print(f"Original caption: {original_caption}")
-#         print(f"New caption: {new_caption}")
-        
-#         # Ensure all required fields are provided
-#         if not image_path:
-#             return jsonify({
-#                 'success': False,
-#                 'error': 'Missing image_path'
-#             }), 400
-#         if original_caption is None:
-#             return jsonify({
-#                 'success': False,
-#                 'error': 'Missing original_caption'
-#             }), 400
-#         if new_caption is None:
-#             return jsonify({
-#                 'success': False,
-#                 'error': 'Missing new_caption'
-#             }), 400
-
-#         # Correct the image path to ensure it is an absolute path
-#         if image_path.startswith('/static/'):
-#             image_path = os.path.join(os.getcwd(), image_path.lstrip('/'))
-
-#         # Calculate similarity scores using embeddings
-#         image_embedding = clip_manager.get_image_embedding(image_path)
-#         original_caption_embedding = clip_manager.get_text_embedding(original_caption)
-#         new_caption_embedding = clip_manager.get_text_embedding(new_caption)
-
-#         old_similarity = clip_manager.calculate_similarity(image_embedding, original_caption_embedding)
-#         new_similarity = clip_manager.calculate_similarity(image_embedding, new_caption_embedding)
-        
-#         print(f"Original caption: {original_caption}, similarity: {old_similarity}")
-#         print(f"New caption: {new_caption}, similarity: {new_similarity}")
-
-#         is_better = new_similarity > old_similarity
-        
-#         return jsonify({
-#             'success': True,
-#             'is_better': is_better,
-#             'old_similarity': float(old_similarity),
-#             'new_similarity': float(new_similarity),
-#             'old_caption': original_caption,
-#             'allow_update': is_better
-#         })
-
-#     except Exception as e:
-#         print(f"Error in verify_caption: {str(e)}")
-#         return jsonify({
-#             'success': False,
-#             'error': str(e)
-#         }), 400
-
-# @app.route('/save-caption', methods=['POST'])
-# def save_caption():
-#     db = get_db()
-#     try:
-#         data = request.get_json()
-#         image_id = data.get('image_id')
-#         new_caption = data.get('caption')
-#         force_update = data.get('force_update', False)  # Add force update option
-        
-#         if not image_id or new_caption is None:
-#             return jsonify({
-#                 'success': False,
-#                 'error': 'Missing image_id or caption'
-#             }), 400
-
-#         # If not forcing update, verify the caption
-#         if not force_update:
-#             image = db.get_image(image_id)
-#             image_path = os.path.join(os.getcwd(), image['path'].lstrip('/'))
-#             old_caption = image['caption']
-            
-#             old_similarity = clip_manager.get_similarity(image_path, old_caption) if old_caption else 0
-#             new_similarity = clip_manager.get_similarity(image_path, new_caption)
-            
-#             if new_similarity <= old_similarity:
-#                 return jsonify({
-#                     'success': False,
-#                     'error': 'New caption is not better than the current one',
-#                     'old_similarity': float(old_similarity),
-#                     'new_similarity': float(new_similarity),
-#                     'old_caption': old_caption
-#                 }), 400
-
-#         # Update the caption
-#         if db.update_caption(image_id, new_caption):
-#             return jsonify({
-#                 'success': True,
-#                 'message': 'Caption updated successfully',
-#                 'caption': new_caption
-#             })
-#         else:
-#             return jsonify({
-#                 'success': False,
-#                 'error': 'Failed to update caption in database'
-#             }), 400
-
-#     except Exception as e:
-#         print(f"Error in save_caption: {str(e)}")
-#         return jsonify({
-#             'success': False,
-#             'error': str(e)
-#         }), 400
-
 @app.route('/debug/database')
 def debug_database():
     db = get_db()
@@ -641,6 +558,62 @@ def debug_database():
         'image_count': len(images),
         'images': images
     })
+
+@app.route('/export/database', methods=['GET'])
+def export_database():
+    db = get_db()
+    images = db.get_all_images()
+    
+    # Create a more detailed export format
+    export_data = []
+    for img in images:
+        export_data.append({
+            'id': img['id'],
+            'image_url': request.host_url.rstrip('/') + img['path'],
+            'caption': img['caption'],
+            'labels': img['labels'] if isinstance(img['labels'], dict) else json.loads(img['labels']),
+            'upload_date': img.get('upload_date', '')
+        })
+    
+    return jsonify({
+        'success': True,
+        'data': export_data
+    })
+
+@app.route('/upload-folder', methods=['POST'])
+def upload_folder():
+    if 'files[]' not in request.files:
+        return jsonify({'success': False, 'error': 'No files uploaded'}), 400
+    
+    files = request.files.getlist('files[]')
+    if not files:
+        return jsonify({'success': False, 'error': 'No files selected'}), 400
+        
+    total_files = len(files)
+    processed_files = 0
+    
+    def generate():
+        nonlocal processed_files
+        for file in files:
+            try:
+                if file.filename == '':
+                    continue
+                    
+                # Process each file using existing process_and_save_image function
+                result = process_and_save_image(file)
+                processed_files += 1
+                
+                # Calculate progress
+                progress = (processed_files / total_files) * 100
+                
+                # Send progress update
+                yield f"data: {json.dumps({'progress': progress, 'processed': processed_files, 'total': total_files, 'filename': file.filename, 'status': 'Processing'})}\n\n"
+                
+            except Exception as e:
+                print(f"Error processing file {file.filename}: {str(e)}")  # Debug log
+                yield f"data: {json.dumps({'progress': progress, 'processed': processed_files, 'total': total_files, 'filename': file.filename, 'status': f'Error: {str(e)}'})}\n\n"
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)

@@ -1,74 +1,139 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container">
-    <h2>Image Database Management</h2>
+<div class="container mt-4">
+    <h2>Database Management</h2>
     
-    <div class="row mb-3">
-        <div class="col">
-            <input type="text" id="searchInput" class="form-control" placeholder="Search by caption or labels...">
+    <!-- Export Database Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Export Database</h4>
+        </div>
+        <div class="card-body">
+            <button id="exportDatabase" class="btn btn-primary">
+                <i class="fas fa-download"></i> Export Database
+            </button>
         </div>
     </div>
-
-    <div class="row" id="imageGrid">
-        {% for image in images %}
-        <div class="col-md-4 mb-4 image-card">
-            <div class="card h-100">
-                <div class="image-container">
-                    <img src="{{ image.path }}" class="card-img-top" alt="{{ image.caption or 'Image' }}">
-                    <div class="image-overlay">
-                        <small class="text-white">{{ image.display_name }}</small>
-                    </div>
+    
+    <!-- Delete All Images Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Delete All Images</h4>
+        </div>
+        <div class="card-body">
+            <button id="deleteAll" class="btn btn-danger">
+                <i class="fas fa-trash"></i> Delete All Images
+            </button>
+        </div>
+    </div>
+    
+    <!-- Upload Folder Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Upload Folder</h4>
+        </div>
+        <div class="card-body">
+            <form id="uploadFolderForm">
+                <div class="mb-3">
+                    <input type="file" class="form-control" id="folderInput" webkitdirectory directory multiple>
                 </div>
-                <div class="card-body">
-                    <div class="caption-container">
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <h6 class="card-subtitle text-muted">Caption</h6>
-                            <button class="btn btn-sm btn-link edit-caption-btn p-0">
-                                <i class="bi bi-pencil"></i>
-                            </button>
-                        </div>
-                        <p class="caption-text" data-image-id="{{ image.id }}">
-                            {{ image.caption or 'No caption yet' }}
-                        </p>
-                        <div class="caption-edit-container" style="display: none;">
-                            <textarea class="form-control caption-editor mb-2">{{ image.caption or '' }}</textarea>
-                            <div class="d-flex gap-2">
-                                <button class="btn btn-sm btn-primary save-caption">Save</button>
-                                <button class="btn btn-sm btn-outline-secondary cancel-caption">Cancel</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {% if image.labels %}
-                    <div class="labels-container mt-3">
-                        <h6 class="card-subtitle text-muted mb-2">Labels</h6>
-                        <div class="labels-grid">
-                            {% for category, confidence in image.labels.items() %}
-                            <div class="label-item" 
-                                 data-bs-toggle="tooltip" 
-                                 title="Confidence: {{ (confidence * 100)|round(1) }}%">
-                                <span class="label-text">{{ category }}</span>
-                                <div class="confidence-bar" style="width: {{ (confidence * 100)|round }}%;"></div>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endif %}
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-upload"></i> Upload Folder
+                </button>
+            </form>
+            
+            <!-- Progress Bar -->
+            <div id="uploadProgress" class="mt-3" style="display: none;">
+                <div class="progress">
+                    <div class="progress-bar" role="progressbar" style="width: 0%"></div>
                 </div>
-                <div class="card-footer bg-transparent">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <button class="btn btn-sm btn-outline-danger delete-btn" data-image-id="{{ image.id }}">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                        <small class="text-muted">
-                            {{ image.created_at.strftime('%Y-%m-%d') if image.created_at }}
-                        </small>
-                    </div>
-                </div>
+                <p class="text-center mt-2">
+                    Processing: <span id="progressText">0%</span>
+                    (<span id="processedFiles">0</span>/<span id="totalFiles">0</span>)
+                </p>
+                <p class="text-center">
+                    Current file: <span id="currentFileName"></span>
+                    <br>
+                    Status: <span id="currentStatus"></span>
+                </p>
             </div>
         </div>
-        {% endfor %}
+    </div>
+    
+    <!-- Existing Image List -->
+    <div class="card">
+        <div class="card-header">
+            <h4>Images in Database</h4>
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col">
+                    <input type="text" id="searchInput" class="form-control" placeholder="Search by caption or labels...">
+                </div>
+            </div>
+
+            <div class="row" id="imageGrid">
+                {% for image in images %}
+                <div class="col-md-4 mb-4 image-card">
+                    <div class="card h-100">
+                        <div class="image-container">
+                            <img src="{{ image.path }}" class="card-img-top" alt="{{ image.caption or 'Image' }}">
+                            <div class="image-overlay">
+                                <small class="text-white">{{ image.display_name }}</small>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="caption-container">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <h6 class="card-subtitle text-muted">Caption</h6>
+                                    <button class="btn btn-sm btn-link edit-caption-btn p-0">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                </div>
+                                <p class="caption-text" data-image-id="{{ image.id }}">
+                                    {{ image.caption or 'No caption yet' }}
+                                </p>
+                                <div class="caption-edit-container" style="display: none;">
+                                    <textarea class="form-control caption-editor mb-2">{{ image.caption or '' }}</textarea>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-sm btn-primary save-caption">Save</button>
+                                        <button class="btn btn-sm btn-outline-secondary cancel-caption">Cancel</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {% if image.labels %}
+                            <div class="labels-container mt-3">
+                                <h6 class="card-subtitle text-muted mb-2">Labels</h6>
+                                <div class="labels-grid">
+                                    {% for category, confidence in image.labels.items() %}
+                                    <div class="label-item" 
+                                         data-bs-toggle="tooltip" 
+                                         title="Confidence: {{ (confidence * 100)|round(1) }}%">
+                                        <span class="label-text">{{ category }}</span>
+                                        <div class="confidence-bar" style="width: {{ (confidence * 100)|round }}%;"></div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <button class="btn btn-sm btn-outline-danger delete-btn" data-image-id="{{ image.id }}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                                <small class="text-muted">
+                                    {{ image.created_at.strftime('%Y-%m-%d') if image.created_at }}
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
     </div>
 </div>
 
@@ -107,12 +172,40 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block scripts %}
 <script>
 $(document).ready(function() {
     let currentEditData = null;
     const verificationModal = new bootstrap.Modal(document.getElementById('captionVerificationModal'));
+
+    // Export Database
+    $('#exportDatabase').click(async function() {
+        try {
+            const response = await fetch('/export/database');
+            const data = await response.json();
+            
+            if (data.success) {
+                // Create and download JSON file
+                const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'image_database.json';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                toastr.success('Database exported successfully');
+            } else {
+                toastr.error('Error exporting database: ' + (data.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Error exporting database:', error);
+            toastr.error('Error exporting database');
+        }
+    });
 
     // Search functionality
     $('#searchInput').on('input', function() {
@@ -166,6 +259,13 @@ $(document).ready(function() {
     $('.caption-text').dblclick(function() {
         const container = $(this).closest('.caption-container');
         $(this).hide();
+        container.find('.caption-edit-container').show();
+        container.find('.caption-editor').focus();
+    });
+
+    $('.edit-caption-btn').click(function() {
+        const container = $(this).closest('.caption-container');
+        container.find('.caption-text').hide();
         container.find('.caption-edit-container').show();
         container.find('.caption-editor').focus();
     });
@@ -286,7 +386,117 @@ $(document).ready(function() {
             }
         });
     }
+
+    // Upload Folder
+    const uploadForm = document.getElementById('uploadFolderForm');
+    if (uploadForm) {
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            console.log('Form submitted'); // Debug log
+            
+            const files = document.getElementById('folderInput').files;
+            if (files.length === 0) {
+                alert('Please select a folder');
+                return;
+            }
+            
+            console.log('Files selected:', files.length); // Debug log
+            
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('files[]', file);
+            }
+            
+            // Show progress bar
+            const progressBar = document.getElementById('uploadProgress');
+            const progressBarInner = progressBar.querySelector('.progress-bar');
+            const progressText = document.getElementById('progressText');
+            const processedFiles = document.getElementById('processedFiles');
+            const totalFiles = document.getElementById('totalFiles');
+            const currentFileName = document.getElementById('currentFileName');
+            const currentStatus = document.getElementById('currentStatus');
+            
+            progressBar.style.display = 'block';
+            totalFiles.textContent = files.length;
+            processedFiles.textContent = 0;
+            progressBarInner.style.width = '0%';
+            progressText.textContent = '0%';
+            currentFileName.textContent = '';
+            currentStatus.textContent = '';
+            
+            try {
+                console.log('Sending request to server...'); // Debug log
+                const response = await fetch('/upload-folder', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                console.log('Response received:', response); // Debug log
+
+                // Handle streaming response
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+                    
+                    const text = decoder.decode(value);
+                    console.log('Received data:', text); // Debug log
+                    
+                    const lines = text.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            console.log('Parsed data:', data); // Debug log
+                            
+                            const progress = data.progress;
+                            progressBarInner.style.width = `${progress}%`;
+                            progressText.textContent = `${Math.round(progress)}%`;
+                            processedFiles.textContent = data.processed;
+                            totalFiles.textContent = data.total;
+                            currentFileName.textContent = data.filename || '';
+                            currentStatus.textContent = data.status || '';
+                        }
+                    }
+                }
+                
+                alert('Folder upload completed!');
+            } catch (error) {
+                console.error('Error uploading folder:', error);
+                alert('Error uploading folder: ' + error.message);
+            } finally {
+                progressBar.style.display = 'none';
+            }
+        });
+    }
+
+    // Delete All Images
+    const deleteAllButton = document.getElementById('deleteAll');
+    if (deleteAllButton) {
+        deleteAllButton.addEventListener('click', async () => {
+            if (confirm('Are you sure you want to delete all images? This action cannot be undone.')) {
+                try {
+                    const response = await fetch('/delete-all', {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        toastr.success('All images have been deleted successfully');
+                        // Reload the page to reflect changes
+                        window.location.reload();
+                    } else {
+                        toastr.error('Error deleting images: ' + (data.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    console.error('Error deleting all images:', error);
+                    toastr.error('Error deleting all images');
+                }
+            }
+        });
+    }
 });
 </script>
-{% endblock %}
 {% endblock %}
