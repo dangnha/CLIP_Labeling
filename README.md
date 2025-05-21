@@ -37,18 +37,18 @@ python app.py
 
 # Demo UI
 ## Home page
-![Image](.\demo\b638cdca-c77a-49ed-adda-064c55bcd3e8.jpg)
+![Image](https://github.com/dangnha/CLIP_Labeling/blob/master/demo/b638cdca-c77a-49ed-adda-064c55bcd3e8.jpg)
 ## Zero-shot Classification
-![Image](.\demo\b6f2f751-e60a-4805-a94b-4d38b93bf161.jpg)
+![Image](https://github.com/dangnha/CLIP_Labeling/blob/master/demo/b6f2f751-e60a-4805-a94b-4d38b93bf161.jpg)
 ## Image Captioning
-![Image](.\demo\93a575e1-4fbe-49a8-8a38-f741ac6d3466.jpg)
+![Image](https://github.com/dangnha/CLIP_Labeling/blob/master/demo/93a575e1-4fbe-49a8-8a38-f741ac6d3466.jpg)
 ## Image Retrieval
-### Text=to-Image
-![Image](.\demo\fa3e943a-1873-4406-80f7-592aba97265b.jpg)
+### Text-to-Image
+![Image](https://github.com/dangnha/CLIP_Labeling/blob/master/demo/fa3e943a-1873-4406-80f7-592aba97265b.jpg)
 ### Image-to-Image
-![Image](.\demo\7335af0e-49a5-4b19-bec9-1c10fd6274a3.jpg)
+![Image](https://github.com/dangnha/CLIP_Labeling/blob/master/demo/7335af0e-49a5-4b19-bec9-1c10fd6274a3.jpg)
 # Database Management
-![Image](.\demo\50fbdcf6-e974-4120-a3ff-d259c9458674.jpg)
-![Image](.\demo\0b940d49-e851-46f8-bce1-1ae19ea74f09.jpg)
+![Image](https://github.com/dangnha/CLIP_Labeling/blob/master/demo/50fbdcf6-e974-4120-a3ff-d259c9458674.jpg)
+![Image](https://github.com/dangnha/CLIP_Labeling/blob/master/demo/0b940d49-e851-46f8-bce1-1ae19ea74f09.jpg)
 
 
