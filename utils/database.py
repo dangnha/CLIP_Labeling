@@ -224,3 +224,14 @@ class ImageDatabase:
 
     def __del__(self):
         self.close()
+
+    def delete_all_images(self):
+        """Delete all images from the database"""
+        try:
+            with self.conn as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM images")
+                conn.commit()
+        except Exception as e:
+            print(f"Error deleting all images: {str(e)}")
+            raise

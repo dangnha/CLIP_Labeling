@@ -1,150 +1,202 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container">
-    <h2 class="mb-4">Search Images</h2>
-
-    <div class="row">
+<div class="container mt-4">
+    <h2>Search Images</h2>
+    
+    <!-- Search Forms -->
+    <div class="row mb-4">
         <!-- Text Search -->
-        <div class="col-md-6 mb-4">
+        <div class="col-md-6">
             <div class="card">
-                <div class="card-header">
-                    <h5>Text Search</h5>
-                </div>
                 <div class="card-body">
-                    <form id="textSearchForm">
+                    <h5 class="card-title">Text Search</h5>
+                    <form id="textSearchForm" onsubmit="handleTextSearch(event)">
                         <div class="mb-3">
-                            <input type="text" class="form-control" id="textQuery" 
-                                   placeholder="Enter search terms..." required>
+                            <input type="text" class="form-control" id="searchQuery" name="query" required
+                                placeholder="Enter search query...">
                         </div>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-search"></i> Search
-                        </button>
+                        <button type="submit" class="btn btn-primary">Search</button>
                     </form>
                 </div>
             </div>
         </div>
-
+        
         <!-- Image Search -->
-        <div class="col-md-6 mb-4">
+        <div class="col-md-6">
             <div class="card">
-                <div class="card-header">
-                    <h5>Image Search</h5>
-                </div>
                 <div class="card-body">
-                    <form id="imageSearchForm">
+                    <h5 class="card-title">Image Search</h5>
+                    <form id="imageSearchForm" onsubmit="handleImageSearch(event)">
                         <div class="mb-3">
-                            <label for="imageUpload" class="form-label">Upload an image to find similar images</label>
-                            <input type="file" class="form-control" id="imageUpload" 
-                                   accept="image/*" required>
+                            <input type="file" class="form-control" id="searchImage" name="image" accept="image/*" required>
                         </div>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-search"></i> Search
-                        </button>
+                        <button type="submit" class="btn btn-primary">Search</button>
                     </form>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Query Information -->
+    <div id="queryInfo" class="mb-4" style="display: none;">
+        <div class="alert alert-info">
+            <span id="queryDetails"></span>
         </div>
     </div>
 
     <!-- Results Section -->
-    <div id="searchResults" class="mt-4" style="display: none;">
-        <h3>Search Results</h3>
-        <div class="row" id="resultsGrid">
-            <!-- Results will be dynamically inserted here -->
+    <div id="searchResults" style="display: none;">
+        <h3>Search Results <span id="resultCount" class="badge bg-secondary"></span></h3>
+        <div class="row" id="imageResults"></div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div id="loadingIndicator" class="text-center" style="display: none;">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
         </div>
     </div>
 </div>
 
-{% block scripts %}
 <script>
-$(document).ready(function() {
-    // Text Search
-    $('#textSearchForm').on('submit', function(e) {
-        e.preventDefault();
-        const query = $('#textQuery').val();
-        
-        $.ajax({
-            url: '/search/text',
-            method: 'POST',
-            data: { query: query },
-            success: function(response) {
-                if (response.success) {
-                    displayResults(response.results);
-                } else {
-                    alert('Error performing search');
-                }
-            },
-            error: function() {
-                alert('Error performing search');
-            }
-        });
-    });
+function showLoading() {
+    document.getElementById('loadingIndicator').style.display = 'block';
+    document.getElementById('searchResults').style.display = 'none';
+    document.getElementById('queryInfo').style.display = 'none';
+}
 
-    // Image Search
-    $('#imageSearchForm').on('submit', function(e) {
-        e.preventDefault();
-        const formData = new FormData();
-        const fileInput = $('#imageUpload')[0];
-        
-        if (fileInput.files.length > 0) {
-            formData.append('image', fileInput.files[0]);
-            
-            $.ajax({
-                url: '/search/image',
-                method: 'POST',
-                data: formData,
-                processData: false,
-                contentType: false,
-                success: function(response) {
-                    if (response.success) {
-                        displayResults(response.results);
-                    } else {
-                        alert('Error performing search');
-                    }
-                },
-                error: function() {
-                    alert('Error performing search');
-                }
-            });
-        }
-    });
+function hideLoading() {
+    document.getElementById('loadingIndicator').style.display = 'none';
+}
 
-    // Function to display results
-    function displayResults(results) {
-        const resultsGrid = $('#resultsGrid');
-        resultsGrid.empty();
+function displaySearchResults(data, queryType) {
+    const resultsContainer = document.getElementById('imageResults');
+    const searchResults = document.getElementById('searchResults');
+    const queryInfo = document.getElementById('queryInfo');
+    const queryDetails = document.getElementById('queryDetails');
+    const resultCount = document.getElementById('resultCount');
+    
+    // Show results section
+    searchResults.style.display = 'block';
+    queryInfo.style.display = 'block';
+    
+    // Update query info
+    if (queryType === 'text') {
+        queryDetails.textContent = `Showing results for: "${data.query}"`;
+    } else {
+        queryDetails.textContent = 'Showing results for uploaded image';
+    }
+    
+    // Update result count
+    resultCount.textContent = `${data.total_results} results`;
+    
+    // Clear previous results
+    resultsContainer.innerHTML = '';
+    
+    // Sort results by similarity_score descending
+    const sortedResults = data.results.slice().sort((a, b) => b.similarity_score - a.similarity_score);
+
+    // Display results
+    sortedResults.forEach(result => {
+        const col = document.createElement('div');
+        col.className = 'col-md-4 mb-4';
         
-        results.forEach(function(result) {
-            const card = `
-                <div class="col-md-4 mb-4">
-                    <div class="card h-100">
-                        <img src="${result.path}" class="card-img-top" 
-                             style="height: 200px; object-fit: cover;">
-                        <div class="card-body">
-                            <p class="card-text">
-                                <strong>Similarity:</strong> ${(result.similarity * 100).toFixed(2)}%
-                            </p>
-                            ${result.caption ? `<p class="card-text">${result.caption}</p>` : ''}
-                            ${result.labels ? `
-                                <div class="labels">
-                                    ${Object.entries(JSON.parse(result.labels)).map(([label, conf]) => 
-                                        `<span class="badge bg-primary me-1" title="Confidence: ${(conf * 100).toFixed(1)}%">
-                                            ${label}
-                                        </span>`
-                                    ).join('')}
-                                </div>
-                            ` : ''}
-                        </div>
+        col.innerHTML = `
+            <div class="card h-100">
+                <img src="${result.path}" class="card-img-top" alt="${result.caption}" style="height: 200px; object-fit: cover;">
+                <div class="card-body">
+                    <h5 class="card-title">Similarity: ${(result.similarity_score * 100).toFixed(2)}%</h5>
+                    <p class="card-text">${result.caption}</p>
+                    <div class="labels-container">
+                        ${Object.entries(result.labels).map(([label, score]) => 
+                            `<span class="badge bg-primary me-1">${label}: ${(score * 100).toFixed(1)}%</span>`
+                        ).join('')}
                     </div>
                 </div>
-            `;
-            resultsGrid.append(card);
-        });
+            </div>
+        `;
         
-        $('#searchResults').show();
-    }
-});
+        resultsContainer.appendChild(col);
+    });
+}
+
+function handleTextSearch(event) {
+    event.preventDefault();
+    showLoading();
+    
+    const formData = new FormData(event.target);
+    
+    fetch('/search/text', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoading();
+        if (data.success) {
+            displaySearchResults(data, 'text');
+        } else {
+            toastr.error(data.error || 'Error performing search');
+        }
+    })
+    .catch(error => {
+        hideLoading();
+        console.error('Error:', error);
+        toastr.error('Error performing search');
+    });
+}
+
+function handleImageSearch(event) {
+    event.preventDefault();
+    showLoading();
+    
+    const formData = new FormData(event.target);
+    
+    fetch('/search/image', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoading();
+        if (data.success) {
+            displaySearchResults(data, 'image');
+        } else {
+            toastr.error(data.error || 'Error performing search');
+        }
+    })
+    .catch(error => {
+        hideLoading();
+        console.error('Error:', error);
+        toastr.error('Error performing search');
+    });
+}
 </script>
-{% endblock %}
+
+<style>
+.card {
+    transition: transform 0.2s;
+}
+
+.card:hover {
+    transform: scale(1.02);
+}
+
+.labels-container {
+    margin-top: 10px;
+}
+
+.badge {
+    margin: 2px;
+}
+
+#loadingIndicator {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1000;
+}
+</style>
 {% endblock %}
